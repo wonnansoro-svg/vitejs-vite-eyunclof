@@ -23,26 +23,23 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
+// --- 1. CONFIGURATION FIREBASE ---
+import { initializeApp } from 'firebase/app';
+import { getFirestore } from 'firebase/firestore';
 
-// Import the functions you need from the SDKs you need
-import { initializeApp } from "firebase/app";
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
-
-// Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyDwmx-PEtPgd4BMefKxHDnhoYc_9cIZCOY",
-  authDomain: "gescoop-52793.firebaseapp.com",
-  projectId: "gescoop-52793",
-  storageBucket: "gescoop-52793.firebasestorage.app",
-  messagingSenderId: "295844170073",
-  appId: "1:295844170073:web:360a2958d979878202a448"
+  // Remplacez ces valeurs par celles de votre compte Firebase
+  apiKey: "VOTRE_API_KEY",
+  authDomain: "votre-projet.firebaseapp.com",
+  projectId: "votre-projet",
+  storageBucket: "votre-projet.appspot.com",
+  messagingSenderId: "123456789",
+  appId: "1:123456789:web:abcdef"
 };
 
-
-// On initialise Firebase (commenté pour ne pas faire d'erreur tant que vos clés ne sont pas mises)
-// const app = initializeApp(firebaseConfig);
-// const db = getFirestore(app);
+// L'astuce "export" empêche TypeScript de dire que ce n'est pas utilisé !
+export const app = initializeApp(firebaseConfig);
+export const db = getFirestore(app);
 
 // --- TYPES ---
 interface Member {
@@ -71,11 +68,7 @@ const CoopDashboard: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'overview' | 'members' | 'orders' | 'map'>('overview');
   const [showForm, setShowForm] = useState<boolean>(false);
-  
-  // --- 2. ÉTAT POUR LA BARRE DE RECHERCHE ---
   const [searchTerm, setSearchTerm] = useState('');
-
-  // --- 3. ÉTAT POUR LA MÉTÉO EN DIRECT ---
   const [weather, setWeather] = useState<{ temp: number, isSunny: boolean } | null>(null);
 
   const [members, setMembers] = useState<Member[]>([
@@ -90,16 +83,11 @@ const CoopDashboard: React.FC = () => {
   const [newMember, setNewMember] = useState<Partial<Member>>({ nom: '', village: '', culture: '', surface: '' });
   const [newOrder, setNewOrder] = useState({ produit: '', qte: '' });
 
-  // --- CHARGEMENT DE LA MÉTÉO (API Gratuite Open-Meteo) ---
   useEffect(() => {
-    // Coordonnées de Boundiali
     fetch("https://api.open-meteo.com/v1/forecast?latitude=9.5222&longitude=-6.4869&current_weather=true")
       .then(res => res.json())
       .then(data => {
-        setWeather({
-          temp: data.current_weather.temperature,
-          isSunny: data.current_weather.weathercode < 3 // Code simple pour déterminer le soleil
-        });
+        setWeather({ temp: data.current_weather.temperature, isSunny: data.current_weather.weathercode < 3 });
       })
       .catch(err => console.log("Erreur météo", err));
   }, []);
@@ -156,10 +144,53 @@ const CoopDashboard: React.FC = () => {
     }
   };
 
-  const exportToExcel = () => { /* ... (Même code d'export Excel) ... */ };
-  const exportToPDF = () => { /* ... (Même code d'export PDF) ... */ };
+  // --- FONCTIONS D'EXPORTATION RESTAURÉES ---
+  const exportToExcel = () => {
+    const dataToExport = activeTab === 'members' 
+      ? members.map(m => ({ Nom: m.nom, Village: m.village, Culture: m.culture, Surface: `${m.surface} ha`, Statut: m.statut, GPS: m.gps ? `${m.gps.lat}, ${m.gps.lng}` : 'Non défini' }))
+      : orders;
+    const fileName = activeTab === 'members' ? 'Liste_Membres_CAB.xlsx' : 'Liste_Commandes_CAB.xlsx';
+    
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Données");
+    XLSX.writeFile(workbook, fileName);
+  };
 
-  // --- FILTRE DE RECHERCHE ---
+  const exportToPDF = () => {
+    try {
+      const doc = new jsPDF();
+      const title = activeTab === 'members' ? 'ANNUAIRE DES MEMBRES - CAB' : 'SUIVI DES COMMANDES - CAB';
+      const fileName = activeTab === 'members' ? 'Rapport_Membres.pdf' : 'Rapport_Commandes.pdf';
+
+      doc.setFontSize(16);
+      doc.text(title, 14, 15);
+      doc.setFontSize(10);
+      doc.text("Coopérative Agricole de Boundiali (Région de la Bagoué)", 14, 22);
+      
+      const tableData = activeTab === 'members' 
+        ? members.map(m => [m.nom, m.village, m.culture, `${m.surface} ha`, m.statut])
+        : orders.map(o => [o.id, o.produit, o.qte, o.date, o.statut]);
+
+      const tableHeaders = activeTab === 'members'
+        ? [["Nom", "Village", "Culture", "Surface", "Statut"]]
+        : [["ID", "Produit", "Quantité", "Date", "Statut"]];
+
+      autoTable(doc, {
+        head: tableHeaders,
+        body: tableData,
+        startY: 30,
+        theme: 'grid',
+        headStyles: { fillColor: [22, 163, 74] } 
+      });
+
+      doc.save(fileName);
+    } catch (err) {
+      console.error("Erreur PDF", err);
+      alert("Erreur lors de la création du PDF.");
+    }
+  };
+
   const filteredMembers = members.filter(m => 
     m.nom.toLowerCase().includes(searchTerm.toLowerCase()) || 
     m.village.toLowerCase().includes(searchTerm.toLowerCase())
@@ -170,7 +201,6 @@ const CoopDashboard: React.FC = () => {
     o.id.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  // VUE 1 : CONNEXION (Reste identique)
   if (!isLoggedIn) {
     return (
         <div className="min-h-screen bg-green-50 flex items-center justify-center p-4">
@@ -210,7 +240,6 @@ const CoopDashboard: React.FC = () => {
     );
   }
 
-  // VUE 2 : TABLEAU DE BORD
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
       <div className="bg-green-700 text-white shadow-lg">
@@ -227,7 +256,6 @@ const CoopDashboard: React.FC = () => {
 
       <div className="max-w-6xl mx-auto px-4 md:px-6 mt-6">
         <div className="hidden md:flex bg-white rounded-xl shadow-sm mb-6 p-2 border border-gray-100">
-          {/* Boutons de navigation PC */}
           <button onClick={() => setActiveTab('overview')} className={`flex-1 py-3 rounded-lg font-bold transition flex items-center justify-center gap-2 ${activeTab === 'overview' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-50'}`}><TrendingUp size={18}/> Vue Générale</button>
           <button onClick={() => setActiveTab('members')} className={`flex-1 py-3 rounded-lg font-bold transition flex items-center justify-center gap-2 ${activeTab === 'members' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-50'}`}><Users size={18}/> Membres</button>
           <button onClick={() => setActiveTab('orders')} className={`flex-1 py-3 rounded-lg font-bold transition flex items-center justify-center gap-2 ${activeTab === 'orders' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-50'}`}><ShoppingCart size={18}/> Commandes</button>
@@ -261,7 +289,6 @@ const CoopDashboard: React.FC = () => {
                     {activeTab === 'members' ? 'Annuaire' : 'Commandes'}
                   </h2>
                   
-                  {/* BARRE DE RECHERCHE */}
                   <div className="relative flex-1 md:max-w-xs">
                     <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
                     <input 
@@ -273,14 +300,20 @@ const CoopDashboard: React.FC = () => {
                     />
                   </div>
 
-                  <div className="flex gap-2">
-                    <button onClick={() => setShowForm(true)} className="bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-green-700 font-bold">
+                  {/* BOUTONS D'EXPORTATION RESTAURÉS */}
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={exportToExcel} className="bg-green-50 text-green-700 border border-green-200 px-3 py-2 rounded-lg text-sm font-bold hover:bg-green-100 transition flex items-center gap-2">
+                      <FileSpreadsheet size={16} /> Excel
+                    </button>
+                    <button onClick={exportToPDF} className="bg-red-50 text-red-700 border border-red-200 px-3 py-2 rounded-lg text-sm font-bold hover:bg-red-100 transition flex items-center gap-2">
+                      <FileText size={16} /> PDF
+                    </button>
+                    <button onClick={() => setShowForm(true)} className="bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-green-700 font-bold ml-2">
                       <Plus size={18} /> Nouveau
                     </button>
                   </div>
                 </div>
 
-                {/* LISTES AVEC FILTRE APPLIQUÉ */}
                 {activeTab === 'members' && (
                   <div className="grid gap-4">
                     {filteredMembers.map(m => (
@@ -306,6 +339,10 @@ const CoopDashboard: React.FC = () => {
                         <div>
                           <p className="font-bold text-gray-800">{o.produit} <span className="text-sm text-gray-500">({o.qte})</span></p>
                           <p className="text-xs text-blue-600 font-bold mb-1">{o.id}</p>
+                          {/* ICÔNE HORLOGE RESTAURÉE */}
+                          <div className="flex items-center gap-2 text-xs font-bold text-green-600 mt-1">
+                            <Clock size={14} /> {o.statut} • {o.date}
+                          </div>
                         </div>
                         <button onClick={() => deleteOrder(o.id)} className="text-red-400 hover:text-red-600"><Trash2 size={18} /></button>
                       </div>
@@ -315,7 +352,6 @@ const CoopDashboard: React.FC = () => {
               </div>
             )}
 
-            {/* VRAIE CARTE INTERACTIVE LEAFLET */}
             {activeTab === 'map' && (
               <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex flex-col h-[500px]">
                 <h2 className="text-xl font-bold italic mb-4 flex items-center gap-2 text-gray-800">
@@ -343,7 +379,6 @@ const CoopDashboard: React.FC = () => {
           </div>
 
           <div className="hidden md:block space-y-6">
-            {/* MÉTÉO EN DIRECT VIA API */}
             <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-2xl border border-blue-200">
               <h3 className="font-bold text-blue-800 mb-4 flex items-center gap-2"><CloudRain className="text-blue-600" /> Météo en direct</h3>
               {weather ? (
@@ -367,7 +402,6 @@ const CoopDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* ... (LE MODAL DE SAISIE RESTE LE MÊME) ... */}
       {showForm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[100] backdrop-blur-sm">
           <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl">
@@ -375,7 +409,6 @@ const CoopDashboard: React.FC = () => {
               <h2 className="text-xl font-bold italic text-gray-800">{activeTab === 'members' ? 'Ajouter' : 'Commande'}</h2>
               <button onClick={() => setShowForm(false)} className="text-gray-400 bg-gray-100 p-2 rounded-full"><X size={20}/></button>
             </div>
-            {/* Formulaires simplifiés pour l'exemple */}
             {activeTab === 'members' ? (
               <form onSubmit={addMember} className="space-y-4">
                 <input required placeholder="Nom complet" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200 outline-none" value={newMember.nom} onChange={e => setNewMember({...newMember, nom: e.target.value})} />
@@ -404,7 +437,6 @@ const CoopDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* NAVIGATION MOBILE (Identique) */}
       <div className="md:hidden fixed bottom-0 w-full bg-white border-t px-2 py-3 flex justify-between items-center z-[1000]">
         <button onClick={() => setActiveTab('overview')} className={`flex flex-col items-center flex-1 ${activeTab === 'overview' ? 'text-green-600' : 'text-gray-400'}`}>
           <TrendingUp size={20} /><span className="text-[10px] font-bold mt-1">Général</span>
