@@ -66,6 +66,49 @@ const CoopDashboard: React.FC = () => {
     setNewOrder({ produit: '', qte: '' });
     setShowForm(false);
   };
+   
+  // Imports à ajouter en haut du fichier avec les autres
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
+
+// ... à l'intérieur du composant CoopDashboard ...
+
+const exportToExcel = () => {
+  const dataToExport = activeTab === 'members' ? members : orders;
+  const fileName = activeTab === 'members' ? 'Liste_Membres_CAB.xlsx' : 'Liste_Commandes_CAB.xlsx';
+  
+  const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Données");
+  XLSX.writeFile(workbook, fileName);
+};
+
+const exportToPDF = () => {
+  const doc = new jsPDF();
+  const title = activeTab === 'members' ? 'ANNUAIRE DES MEMBRES - CAB' : 'SUIVI DES COMMANDES - CAB';
+  const fileName = activeTab === 'members' ? 'Rapport_Membres.pdf' : 'Rapport_Commandes.pdf';
+
+  doc.text(title, 14, 15);
+  
+  const tableData = activeTab === 'members' 
+    ? members.map(m => [m.nom, m.village, m.culture, m.surface, m.statut])
+    : orders.map(o => [o.id, o.produit, o.qte, o.date, o.statut]);
+
+  const tableHeaders = activeTab === 'members'
+    ? [["Nom", "Village", "Culture", "Surface", "Statut"]]
+    : [["ID", "Produit", "Quantité", "Date", "Statut"]];
+
+  (doc as any).autoTable({
+    head: tableHeaders,
+    body: tableData,
+    startY: 25,
+    theme: 'grid',
+    headStyles: { fillStyle: [34, 139, 34] } // Vert forêt pour le rappel CAB
+  });
+
+  doc.save(fileName);
+};
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
