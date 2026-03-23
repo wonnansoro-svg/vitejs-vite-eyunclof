@@ -5,17 +5,14 @@ import {
   Map as MapIcon, CloudRain, Sun, MapPin, Trash2, Crosshair, LogOut, Lock, User
 } from 'lucide-react';
 
-// --- IMPORTATIONS EXPORT ---
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable'; 
 
-// --- IMPORTATIONS CARTE (LEAFLET) ---
 import 'leaflet/dist/leaflet.css';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 
-// Correction de l'icône par défaut de Leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
@@ -25,10 +22,11 @@ L.Icon.Default.mergeOptions({
 
 // --- 1. CONFIGURATION FIREBASE ---
 import { initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+// NOUVEAU : On importe les outils pour lire et écrire dans la base
+import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc } from 'firebase/firestore';
 
 const firebaseConfig = {
-  // Remplacez ces valeurs par celles de votre compte Firebase
+  // ⚠️ GARDEZ VOS VRAIES CLÉS ICI
   apiKey: "VOTRE_API_KEY",
   authDomain: "votre-projet.firebaseapp.com",
   projectId: "votre-projet",
@@ -37,13 +35,12 @@ const firebaseConfig = {
   appId: "1:123456789:web:abcdef"
 };
 
-// L'astuce "export" empêche TypeScript de dire que ce n'est pas utilisé !
 export const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 
 // --- TYPES ---
 interface Member {
-  id: number;
+  id: string; // NOUVEAU : l'ID est maintenant un texte généré par Firebase
   nom: string;
   village: string;
   culture: string;
@@ -71,26 +68,41 @@ const CoopDashboard: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [weather, setWeather] = useState<{ temp: number, isSunny: boolean } | null>(null);
 
-  const [members, setMembers] = useState<Member[]>([
-    { id: 1, nom: "Amadou Koné", village: "Kouto", culture: "Coton", surface: "5", statut: "Actif", gps: { lat: 9.88, lng: -6.41 } },
-    { id: 2, nom: "Fatouma Sylla", village: "Tengréla", culture: "Anacarde", surface: "12", statut: "Actif", gps: { lat: 10.48, lng: -6.40 } }
-  ]);
-
-  const [orders, setOrders] = useState<Order[]>([
-    { id: "CMD-089", produit: "Engrais NPK", qte: "50 sacs", date: "Aujourd'hui", statut: "Livré" }
-  ]);
+  // NOUVEAU : Les listes sont vides au départ, on va les remplir avec Firebase
+  const [members, setMembers] = useState<Member[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
 
   const [newMember, setNewMember] = useState<Partial<Member>>({ nom: '', village: '', culture: '', surface: '' });
   const [newOrder, setNewOrder] = useState({ produit: '', qte: '' });
 
+  // --- CHARGEMENT DES DONNÉES (Météo + Firebase) ---
   useEffect(() => {
+    // 1. Météo
     fetch("https://api.open-meteo.com/v1/forecast?latitude=9.5222&longitude=-6.4869&current_weather=true")
       .then(res => res.json())
-      .then(data => {
-        setWeather({ temp: data.current_weather.temperature, isSunny: data.current_weather.weathercode < 3 });
-      })
+      .then(data => setWeather({ temp: data.current_weather.temperature, isSunny: data.current_weather.weathercode < 3 }))
       .catch(err => console.log("Erreur météo", err));
-  }, []);
+
+    // 2. Récupérer les données Firebase
+    const fetchDonnees = async () => {
+      try {
+        const membresSnapshot = await getDocs(collection(db, "membres"));
+        const membresData = membresSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Member));
+        setMembers(membresData);
+
+        const commandesSnapshot = await getDocs(collection(db, "commandes"));
+        const commandesData = commandesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
+        setOrders(commandesData);
+      } catch (error) {
+        console.error("Erreur de connexion à la base de données", error);
+      }
+    };
+    
+    // On charge les données uniquement si l'utilisateur est connecté
+    if (isLoggedIn) {
+      fetchDonnees();
+    }
+  }, [isLoggedIn]); // Se déclenche à la connexion
 
   const handleAuth = (e: React.FormEvent) => {
     e.preventDefault();
@@ -108,28 +120,55 @@ const CoopDashboard: React.FC = () => {
     }
   };
 
-  const addMember = (e: React.FormEvent) => {
+  // --- ENREGISTRER DANS FIREBASE ---
+  const addMember = async (e: React.FormEvent) => {
     e.preventDefault();
-    const member = { ...newMember, id: Date.now(), statut: "Actif" } as Member;
-    setMembers([member, ...members]);
-    setNewMember({ nom: '', village: '', culture: '', surface: '' });
-    setShowForm(false);
+    try {
+      const membreAEnvoyer = { ...newMember, statut: "Actif" };
+      // Envoi sur le Cloud
+      const docRef = await addDoc(collection(db, "membres"), membreAEnvoyer);
+      // Mise à jour de l'écran
+      setMembers([{ id: docRef.id, ...membreAEnvoyer } as Member, ...members]);
+      setNewMember({ nom: '', village: '', culture: '', surface: '' });
+      setShowForm(false);
+    } catch (error) {
+      alert("Erreur lors de l'enregistrement du membre.");
+    }
   };
 
-  const deleteMember = (id: number) => {
-    if(window.confirm("Supprimer ce membre ?")) setMembers(members.filter(m => m.id !== id));
+  const deleteMember = async (id: string) => {
+    if(window.confirm("Supprimer ce membre définitivement ?")) {
+      try {
+        await deleteDoc(doc(db, "membres", id));
+        setMembers(members.filter(m => m.id !== id));
+      } catch (error) {
+        alert("Erreur lors de la suppression.");
+      }
+    }
   };
 
-  const addOrder = (e: React.FormEvent) => {
+  const addOrder = async (e: React.FormEvent) => {
     e.preventDefault();
-    const order: Order = { ...newOrder, id: `CMD-${Math.floor(Math.random()*1000)}`, date: "Aujourd'hui", statut: "En attente" };
-    setOrders([order, ...orders]);
-    setNewOrder({ produit: '', qte: '' });
-    setShowForm(false);
+    try {
+      const commandeAEnvoyer = { ...newOrder, date: new Date().toLocaleDateString('fr-FR'), statut: "En attente" };
+      const docRef = await addDoc(collection(db, "commandes"), commandeAEnvoyer);
+      setOrders([{ id: docRef.id, ...commandeAEnvoyer } as Order, ...orders]);
+      setNewOrder({ produit: '', qte: '' });
+      setShowForm(false);
+    } catch (error) {
+      alert("Erreur lors de l'enregistrement de la commande.");
+    }
   };
 
-  const deleteOrder = (id: string) => {
-    if(window.confirm("Supprimer cette commande ?")) setOrders(orders.filter(o => o.id !== id));
+  const deleteOrder = async (id: string) => {
+    if(window.confirm("Supprimer cette commande ?")) {
+      try {
+        await deleteDoc(doc(db, "commandes", id));
+        setOrders(orders.filter(o => o.id !== id));
+      } catch (error) {
+        alert("Erreur lors de la suppression.");
+      }
+    }
   };
 
   const captureGPS = () => {
@@ -144,7 +183,6 @@ const CoopDashboard: React.FC = () => {
     }
   };
 
-  // --- FONCTIONS D'EXPORTATION RESTAURÉES ---
   const exportToExcel = () => {
     const dataToExport = activeTab === 'members' 
       ? members.map(m => ({ Nom: m.nom, Village: m.village, Culture: m.culture, Surface: `${m.surface} ha`, Statut: m.statut, GPS: m.gps ? `${m.gps.lat}, ${m.gps.lng}` : 'Non défini' }))
@@ -159,14 +197,14 @@ const CoopDashboard: React.FC = () => {
 
   const exportToPDF = () => {
     try {
-      const doc = new jsPDF();
+      const docPDF = new jsPDF();
       const title = activeTab === 'members' ? 'ANNUAIRE DES MEMBRES - CAB' : 'SUIVI DES COMMANDES - CAB';
       const fileName = activeTab === 'members' ? 'Rapport_Membres.pdf' : 'Rapport_Commandes.pdf';
 
-      doc.setFontSize(16);
-      doc.text(title, 14, 15);
-      doc.setFontSize(10);
-      doc.text("Coopérative Agricole de Boundiali (Région de la Bagoué)", 14, 22);
+      docPDF.setFontSize(16);
+      docPDF.text(title, 14, 15);
+      docPDF.setFontSize(10);
+      docPDF.text("Coopérative Agricole de Boundiali (Région de la Bagoué)", 14, 22);
       
       const tableData = activeTab === 'members' 
         ? members.map(m => [m.nom, m.village, m.culture, `${m.surface} ha`, m.statut])
@@ -176,7 +214,7 @@ const CoopDashboard: React.FC = () => {
         ? [["Nom", "Village", "Culture", "Surface", "Statut"]]
         : [["ID", "Produit", "Quantité", "Date", "Statut"]];
 
-      autoTable(doc, {
+      autoTable(docPDF, {
         head: tableHeaders,
         body: tableData,
         startY: 30,
@@ -184,7 +222,7 @@ const CoopDashboard: React.FC = () => {
         headStyles: { fillColor: [22, 163, 74] } 
       });
 
-      doc.save(fileName);
+      docPDF.save(fileName);
     } catch (err) {
       console.error("Erreur PDF", err);
       alert("Erreur lors de la création du PDF.");
@@ -300,7 +338,6 @@ const CoopDashboard: React.FC = () => {
                     />
                   </div>
 
-                  {/* BOUTONS D'EXPORTATION RESTAURÉS */}
                   <div className="flex flex-wrap gap-2">
                     <button onClick={exportToExcel} className="bg-green-50 text-green-700 border border-green-200 px-3 py-2 rounded-lg text-sm font-bold hover:bg-green-100 transition flex items-center gap-2">
                       <FileSpreadsheet size={16} /> Excel
@@ -328,7 +365,7 @@ const CoopDashboard: React.FC = () => {
                         <button onClick={() => deleteMember(m.id)} className="text-red-400 hover:text-red-600"><Trash2 size={18} /></button>
                       </div>
                     ))}
-                    {filteredMembers.length === 0 && <p className="text-center text-gray-500 py-4">Aucun résultat trouvé.</p>}
+                    {filteredMembers.length === 0 && <p className="text-center text-gray-500 py-4">Aucun résultat trouvé ou liste vide.</p>}
                   </div>
                 )}
 
@@ -338,8 +375,7 @@ const CoopDashboard: React.FC = () => {
                       <div key={o.id} className="p-4 border border-gray-100 rounded-xl bg-gray-50 flex justify-between items-center">
                         <div>
                           <p className="font-bold text-gray-800">{o.produit} <span className="text-sm text-gray-500">({o.qte})</span></p>
-                          <p className="text-xs text-blue-600 font-bold mb-1">{o.id}</p>
-                          {/* ICÔNE HORLOGE RESTAURÉE */}
+                          <p className="text-xs text-blue-600 font-bold mb-1">ID: {o.id}</p>
                           <div className="flex items-center gap-2 text-xs font-bold text-green-600 mt-1">
                             <Clock size={14} /> {o.statut} • {o.date}
                           </div>
@@ -347,6 +383,7 @@ const CoopDashboard: React.FC = () => {
                         <button onClick={() => deleteOrder(o.id)} className="text-red-400 hover:text-red-600"><Trash2 size={18} /></button>
                       </div>
                     ))}
+                    {filteredOrders.length === 0 && <p className="text-center text-gray-500 py-4">Aucune commande.</p>}
                   </div>
                 )}
               </div>
@@ -424,13 +461,13 @@ const CoopDashboard: React.FC = () => {
                   </div>
                   <button type="button" onClick={captureGPS} className="bg-blue-600 text-white p-2 rounded-lg font-bold"><Crosshair size={16} /></button>
                 </div>
-                <button type="submit" className="w-full bg-green-600 text-white py-4 rounded-xl font-bold">Enregistrer</button>
+                <button type="submit" className="w-full bg-green-600 text-white py-4 rounded-xl font-bold hover:bg-green-700 transition">Enregistrer</button>
               </form>
             ) : (
               <form onSubmit={addOrder} className="space-y-4">
                 <input required placeholder="Produit" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200 outline-none" value={newOrder.produit} onChange={e => setNewOrder({...newOrder, produit: e.target.value})} />
                 <input required placeholder="Quantité" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200 outline-none" value={newOrder.qte} onChange={e => setNewOrder({...newOrder, qte: e.target.value})} />
-                <button type="submit" className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold">Valider</button>
+                <button type="submit" className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold hover:bg-blue-700 transition">Valider</button>
               </form>
             )}
           </div>
@@ -452,4 +489,4 @@ const CoopDashboard: React.FC = () => {
   );
 };
 
-export default CoopDashboard;
+export default CoopDashboard;s
