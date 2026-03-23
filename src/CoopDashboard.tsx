@@ -1,204 +1,220 @@
 import React, { useState } from 'react';
 import { 
-  Users, 
-  Tractor, 
-  Sprout, 
-  ShoppingCart, 
-  BellRing, 
-  TrendingUp, 
-  MapPin, 
-  Search, 
-  ChevronRight,
-  Package,
-  CheckCircle2,
-  Clock
+  Users, Tractor, Sprout, ShoppingCart, BellRing, 
+  TrendingUp, MapPin, Search, ChevronRight,
+  Package, CheckCircle2, Clock, Plus, X
 } from 'lucide-react';
 
-// --- 1. DÉFINITION DES TYPES ---
-interface CoopStat {
-  title: string;
-  value: string | number;
-  subtitle: string;
-  icon: React.ElementType;
-  color: string;
-  bg: string;
-}
-
-interface Alert {
+// --- TYPES ---
+interface Member {
   id: number;
-  member: string;
-  type: string;
-  message: string;
-  date: string;
+  nom: string;
+  village: string;
+  culture: string;
+  surface: string;
+  statut: string;
 }
 
-// --- 2. VRAIES DONNÉES (Simulées) ---
-const mockMembers = [
-  { id: 1, nom: "Amadou Koné", village: "Kouto", culture: "Coton", surface: "5 ha", statut: "Actif" },
-  { id: 2, nom: "Fatouma Sylla", village: "Tengréla", culture: "Anacarde", surface: "12 ha", statut: "Actif" },
-  { id: 3, nom: "Seydou Traoré", village: "Boundiali", culture: "Maïs", surface: "3 ha", statut: "En attente" },
-  { id: 4, nom: "Mariam Ouattara", village: "Kolia", culture: "Coton", surface: "8 ha", statut: "Actif" },
-];
+interface Order {
+  id: string;
+  produit: string;
+  qte: string;
+  date: string;
+  statut: string;
+}
 
-const mockOrders = [
-  { id: "CMD-089", produit: "Engrais NPK 15-15-15", qte: "50 sacs", date: "Aujourd'hui", statut: "Livré" },
-  { id: "CMD-090", produit: "Semences de Maïs", qte: "20 kg", date: "Hier", statut: "En préparation" },
-  { id: "CMD-091", produit: "Produit Phytosanitaire", qte: "10 litres", date: "12 Mars", statut: "En attente" },
-];
-
-// --- 3. COMPOSANT PRINCIPAL ---
 const CoopDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'overview' | 'members' | 'orders'>('overview');
-  const coopName = "Coopérative Agricole de Boundiali (CAB)";
+  const [showForm, setShowForm] = useState<boolean>(false);
   
-  const stats: CoopStat[] = [
-    { title: "Membres Actifs", value: 142, subtitle: "+5 ce mois", icon: Users, color: "text-blue-600", bg: "bg-blue-100" },
-    { title: "Récolte Prévue", value: "850 T", subtitle: "Coton & Anacarde", icon: Sprout, color: "text-green-600", bg: "bg-green-100" },
-    { title: "Commandes", value: 24, subtitle: "Intrants en cours", icon: ShoppingCart, color: "text-orange-600", bg: "bg-orange-100" },
-    { title: "Matériel", value: 8, subtitle: "Tracteurs dispo.", icon: Tractor, color: "text-purple-600", bg: "bg-purple-100" }
-  ];
+  // --- ÉTATS POUR LES DONNÉES (Saisie en direct) ---
+  const [members, setMembers] = useState<Member[]>([
+    { id: 1, nom: "Amadou Koné", village: "Kouto", culture: "Coton", surface: "5 ha", statut: "Actif" },
+    { id: 2, nom: "Fatouma Sylla", village: "Tengréla", culture: "Anacarde", surface: "12 ha", statut: "Actif" }
+  ]);
 
-  const alerts: Alert[] = [
-    { id: 1, member: "Zone Nord (Kouto)", type: "Météo", message: "Risque de fortes pluies demain", date: "Il y a 2h" },
-    { id: 2, member: "Amadou K.", type: "Paiement", message: "Cotisation annuelle reçue", date: "Il y a 5h" },
-  ];
+  const [orders, setOrders] = useState<Order[]>([
+    { id: "CMD-089", produit: "Engrais NPK", qte: "50 sacs", date: "23 Mars", statut: "Livré" }
+  ]);
 
-  // --- VUE: GÉNÉRAL (L'accueil) ---
-  const renderOverview = () => (
-    <>
-      <div className="grid grid-cols-2 gap-4 mb-6">
-        {stats.map((stat, index) => (
-          <div key={index} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${stat.bg} ${stat.color} mb-3`}>
-              <stat.icon size={20} />
-            </div>
-            <h3 className="text-2xl font-bold text-gray-800">{stat.value}</h3>
-            <p className="text-sm font-medium text-gray-600">{stat.title}</p>
-            <p className="text-xs text-gray-400 mt-1">{stat.subtitle}</p>
-          </div>
-        ))}
-      </div>
+  // --- ÉTATS POUR LES FORMULAIRES ---
+  const [newMember, setNewMember] = useState({ nom: '', village: '', culture: '', surface: '' });
+  const [newOrder, setNewOrder] = useState({ produit: '', qte: '' });
 
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mb-6">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-lg font-bold text-gray-800">Alertes Récentes</h2>
-          <button className="text-green-600 text-sm font-medium">Voir tout</button>
-        </div>
-        <div className="space-y-3">
-          {alerts.map((alert) => (
-            <div key={alert.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
-              <div className="flex items-center gap-3">
-                <div className="w-2 h-2 rounded-full bg-orange-500"></div>
-                <div>
-                  <p className="text-sm font-bold text-gray-800">{alert.type} • {alert.member}</p>
-                  <p className="text-xs text-gray-500">{alert.message}</p>
-                </div>
-              </div>
-              <span className="text-xs text-gray-400">{alert.date}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </>
-  );
+  // --- FONCTIONS D'AJOUT ---
+  const addMember = (e: React.FormEvent) => {
+    e.preventDefault();
+    const member: Member = { ...newMember, id: Date.now(), statut: "Actif" };
+    setMembers([member, ...members]);
+    setNewMember({ nom: '', village: '', culture: '', surface: '' });
+    setShowForm(false);
+  };
 
-  // --- VUE: MEMBRES ---
-  const renderMembers = () => (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mb-6">
-      <h2 className="text-lg font-bold text-gray-800 mb-4">Annuaire des Membres</h2>
-      <div className="space-y-4">
-        {mockMembers.map((member) => (
-          <div key={member.id} className="flex items-center justify-between p-3 border border-gray-100 rounded-xl hover:bg-gray-50 transition">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold">
-                {member.nom.charAt(0)}
-              </div>
-              <div>
-                <p className="text-sm font-bold text-gray-800">{member.nom}</p>
-                <div className="flex items-center gap-1 text-xs text-gray-500 mt-1">
-                  <MapPin size={12} /> {member.village} • {member.culture} ({member.surface})
-                </div>
-              </div>
-            </div>
-            <ChevronRight size={16} className="text-gray-400" />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
-  // --- VUE: COMMANDES ---
-  const renderOrders = () => (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mb-6">
-      <h2 className="text-lg font-bold text-gray-800 mb-4">Suivi des Intrants</h2>
-      <div className="space-y-4">
-        {mockOrders.map((order) => (
-          <div key={order.id} className="p-4 border border-gray-100 rounded-xl">
-            <div className="flex justify-between items-start mb-2">
-              <div className="flex items-center gap-2">
-                <Package size={18} className="text-blue-500" />
-                <span className="text-sm font-bold text-gray-800">{order.id}</span>
-              </div>
-              <span className="text-xs font-medium text-gray-500">{order.date}</span>
-            </div>
-            <p className="text-sm text-gray-800 mb-1">{order.produit}</p>
-            <p className="text-xs text-gray-500 mb-3">Quantité: {order.qte}</p>
-            <div className="flex items-center gap-1">
-              {order.statut === "Livré" ? <CheckCircle2 size={14} className="text-green-500" /> : <Clock size={14} className="text-orange-500" />}
-              <span className={`text-xs font-bold ${order.statut === "Livré" ? "text-green-600" : "text-orange-600"}`}>
-                {order.statut}
-              </span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  const addOrder = (e: React.FormEvent) => {
+    e.preventDefault();
+    const order: Order = { 
+      ...newOrder, 
+      id: `CMD-${Math.floor(Math.random()*1000)}`, 
+      date: "Aujourd'hui", 
+      statut: "En attente" 
+    };
+    setOrders([order, ...orders]);
+    setNewOrder({ produit: '', qte: '' });
+    setShowForm(false);
+  };
 
   return (
-    <div className="flex flex-col h-full relative bg-gray-50 max-w-md mx-auto shadow-2xl overflow-hidden">
-      
-      {/* Header fixe */}
-      <div className="bg-green-700 text-white px-6 pt-12 pb-6 rounded-b-3xl shadow-lg z-10">
-        <div className="flex justify-between items-center mb-6">
+    <div className="min-h-screen bg-gray-50 pb-20">
+      {/* HEADER RESPONSIVE */}
+      <div className="bg-green-700 text-white shadow-lg">
+        <div className="max-w-6xl mx-auto px-6 py-8 md:py-12 flex justify-between items-center">
           <div>
-            <p className="text-green-200 text-sm font-medium mb-1">Espace Adhérent</p>
-            <h1 className="text-xl font-bold">{coopName}</h1>
+            <p className="text-green-200 text-sm font-medium">Coopérative Agricole de Boundiali</p>
+            <h1 className="text-2xl md:text-4xl font-bold">Tableau de Bord Administratif</h1>
           </div>
-          <div className="relative">
-            <div className="bg-green-600 p-2 rounded-full">
-              <BellRing size={20} className="text-white" />
-            </div>
-            <span className="absolute -top-1 -right-1 bg-red-500 w-3 h-3 rounded-full border-2 border-green-700"></span>
-          </div>
-        </div>
-      </div>
-
-      {/* Contenu dynamique au centre */}
-      <div className="flex-1 overflow-y-auto px-4 -mt-4 pt-8 pb-24 z-0">
-        {activeTab === 'overview' && renderOverview()}
-        {activeTab === 'members' && renderMembers()}
-        {activeTab === 'orders' && renderOrders()}
-      </div>
-
-      {/* Barre de navigation fixe en bas */}
-      <div className="absolute bottom-0 w-full bg-white border-t border-gray-200 px-6 py-3 flex justify-between items-center z-50">
-        <button onClick={() => setActiveTab('overview')} className={`flex flex-col items-center transition-colors ${activeTab === 'overview' ? 'text-green-600' : 'text-gray-400 hover:text-green-500'}`}>
-          <TrendingUp size={24} className={activeTab === 'overview' ? 'drop-shadow-md' : ''} />
-          <span className="text-[10px] font-bold mt-1">Général</span>
-        </button>
-        <button onClick={() => setActiveTab('members')} className={`flex flex-col items-center transition-colors ${activeTab === 'members' ? 'text-green-600' : 'text-gray-400 hover:text-green-500'}`}>
-          <Users size={24} />
-          <span className="text-[10px] font-bold mt-1">Membres</span>
-        </button>
-        <div className="relative -top-5">
-          <button className="bg-green-600 text-white p-4 rounded-full shadow-xl flex items-center justify-center border-4 border-gray-50 hover:bg-green-700 transition">
-            <Search size={24} />
+          <button className="bg-green-600 p-3 rounded-full hover:bg-green-500 transition">
+            <BellRing size={24} />
           </button>
         </div>
-        <button onClick={() => setActiveTab('orders')} className={`flex flex-col items-center transition-colors ${activeTab === 'orders' ? 'text-green-600' : 'text-gray-400 hover:text-green-500'}`}>
-          <ShoppingCart size={24} />
-          <span className="text-[10px] font-bold mt-1">Commandes</span>
+      </div>
+
+      <div className="max-w-6xl mx-auto px-4 md:px-6 -mt-8">
+        {/* NAVIGATION TABLETTE/PC (Haut) */}
+        <div className="hidden md:flex bg-white rounded-xl shadow-sm mb-8 p-2 border border-gray-100">
+          <button onClick={() => setActiveTab('overview')} className={`flex-1 py-3 rounded-lg font-bold transition ${activeTab === 'overview' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-50'}`}>Vue Générale</button>
+          <button onClick={() => setActiveTab('members')} className={`flex-1 py-3 rounded-lg font-bold transition ${activeTab === 'members' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-50'}`}>Membres</button>
+          <button onClick={() => setActiveTab('orders')} className={`flex-1 py-3 rounded-lg font-bold transition ${activeTab === 'orders' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-50'}`}>Commandes</button>
+        </div>
+
+        {/* CONTENU DYNAMIQUE */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          
+          {/* Colonne Principale (S'adapte selon l'onglet) */}
+          <div className="md:col-span-2 space-y-6">
+            
+            {activeTab === 'overview' && (
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                  <Users className="text-blue-600 mb-2" />
+                  <p className="text-3xl font-bold">{members.length}</p>
+                  <p className="text-sm text-gray-500">Membres</p>
+                </div>
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                  <ShoppingCart className="text-orange-600 mb-2" />
+                  <p className="text-3xl font-bold">{orders.length}</p>
+                  <p className="text-sm text-gray-500">Commandes</p>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'members' && (
+              <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-xl font-bold italic">Liste des Membres</h2>
+                  <button onClick={() => setShowForm(true)} className="bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-green-700">
+                    <Plus size={18} /> Nouveau Membre
+                  </button>
+                </div>
+                <div className="grid gap-4">
+                  {members.map(m => (
+                    <div key={m.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 bg-green-200 rounded-full flex items-center justify-center font-bold text-green-800">{m.nom[0]}</div>
+                        <div>
+                          <p className="font-bold">{m.nom}</p>
+                          <p className="text-sm text-gray-500">{m.village} • {m.culture}</p>
+                        </div>
+                      </div>
+                      <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full font-bold">{m.statut}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'orders' && (
+              <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-xl font-bold italic">Commandes d'Intrants</h2>
+                  <button onClick={() => setShowForm(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700">
+                    <Plus size={18} /> Nouvelle Commande
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {orders.map(o => (
+                    <div key={o.id} className="p-4 border border-gray-100 rounded-xl bg-gray-50">
+                      <div className="flex justify-between mb-2 italic">
+                        <span className="font-bold text-blue-600">{o.id}</span>
+                        <span className="text-xs text-gray-400">{o.date}</span>
+                      </div>
+                      <p className="font-medium">{o.produit}</p>
+                      <p className="text-sm text-gray-500 mb-2">Quantité : {o.qte}</p>
+                      <div className="flex items-center gap-2 text-xs font-bold text-orange-600">
+                        <Clock size={14} /> {o.statut}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Colonne Latérale (Visible sur PC) */}
+          <div className="hidden md:block space-y-6 italic">
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+              <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
+                <Sprout className="text-green-600" /> Infos Récolte
+              </h3>
+              <p className="text-sm text-gray-600 leading-relaxed">
+                La campagne cotonnière à Boundiali prévoit une hausse de 12% cette année grâce aux pluies précoces.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* MODAL DE SAISIE (Formulaire) */}
+      {showForm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[100]">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold italic">
+                {activeTab === 'members' ? 'Ajouter un Membre' : 'Nouvelle Commande'}
+              </h2>
+              <button onClick={() => setShowForm(false)} className="text-gray-400 hover:text-gray-600"><X /></button>
+            </div>
+
+            {activeTab === 'members' ? (
+              <form onSubmit={addMember} className="space-y-4">
+                <input required placeholder="Nom complet" className="w-full p-3 bg-gray-50 rounded-xl border-none focus:ring-2 focus:ring-green-500" value={newMember.nom} onChange={e => setNewMember({...newMember, nom: e.target.value})} />
+                <input required placeholder="Village" className="w-full p-3 bg-gray-50 rounded-xl border-none focus:ring-2 focus:ring-green-500" value={newMember.village} onChange={e => setNewMember({...newMember, village: e.target.value})} />
+                <div className="grid grid-cols-2 gap-4">
+                  <input required placeholder="Culture" className="w-full p-3 bg-gray-50 rounded-xl border-none focus:ring-2 focus:ring-green-500" value={newMember.culture} onChange={e => setNewMember({...newMember, culture: e.target.value})} />
+                  <input required placeholder="Surface (ha)" className="w-full p-3 bg-gray-50 rounded-xl border-none focus:ring-2 focus:ring-green-500" value={newMember.surface} onChange={e => setNewMember({...newMember, surface: e.target.value})} />
+                </div>
+                <button type="submit" className="w-full bg-green-600 text-white py-4 rounded-xl font-bold shadow-lg hover:bg-green-700 transition">Enregistrer le Membre</button>
+              </form>
+            ) : (
+              <form onSubmit={addOrder} className="space-y-4">
+                <input required placeholder="Nom de l'intrant (ex: Engrais)" className="w-full p-3 bg-gray-50 rounded-xl border-none focus:ring-2 focus:ring-blue-500" value={newOrder.produit} onChange={e => setNewOrder({...newOrder, produit: e.target.value})} />
+                <input required placeholder="Quantité (ex: 10 sacs)" className="w-full p-3 bg-gray-50 rounded-xl border-none focus:ring-2 focus:ring-blue-500" value={newOrder.qte} onChange={e => setNewOrder({...newOrder, qte: e.target.value})} />
+                <button type="submit" className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold shadow-lg hover:bg-blue-700 transition">Valider la Commande</button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* NAVIGATION MOBILE (Fixe en bas) */}
+      <div className="md:hidden fixed bottom-0 w-full bg-white border-t px-6 py-3 flex justify-between items-center z-50">
+        <button onClick={() => setActiveTab('overview')} className={`flex flex-col items-center ${activeTab === 'overview' ? 'text-green-600' : 'text-gray-400'}`}>
+          <TrendingUp size={24} /><span className="text-[10px] font-bold">Général</span>
+        </button>
+        <button onClick={() => setActiveTab('members')} className={`flex flex-col items-center ${activeTab === 'members' ? 'text-green-600' : 'text-gray-400'}`}>
+          <Users size={24} /><span className="text-[10px] font-bold">Membres</span>
+        </button>
+        <button onClick={() => setActiveTab('orders')} className={`flex flex-col items-center ${activeTab === 'orders' ? 'text-green-600' : 'text-gray-400'}`}>
+          <ShoppingCart size={24} /><span className="text-[10px] font-bold">Commandes</span>
         </button>
       </div>
     </div>
