@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { 
-  Users, Sprout, ShoppingCart, BellRing, TrendingUp, 
+  Users, Sprout, ShoppingCart, TrendingUp, 
   Clock, Plus, X, FileSpreadsheet, FileText, 
   Map as MapIcon, CloudRain, Sun, MapPin, Trash2, Crosshair, LogOut, Lock, User
 } from 'lucide-react';
@@ -8,7 +8,7 @@ import {
 // --- IMPORTATIONS CORRIGÉES POUR L'EXPORTATION ---
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable'; // Importation robuste pour Vite
+import autoTable from 'jspdf-autotable'; 
 
 // --- TYPES ---
 interface Member {
@@ -18,7 +18,7 @@ interface Member {
   culture: string;
   surface: string;
   statut: string;
-  gps?: { lat: number; lng: number }; // Ajout du GPS
+  gps?: { lat: number; lng: number }; 
 }
 
 interface Order {
@@ -34,7 +34,7 @@ const CoopDashboard: React.FC = () => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('register');
   const [credentials, setCredentials] = useState({ username: '', password: '' });
-  const [registeredUser, setRegisteredUser] = useState({ username: 'admin', password: '123' }); // Faux compte par défaut
+  const [registeredUser, setRegisteredUser] = useState({ username: 'admin', password: '123' }); 
 
   // --- ÉTATS POUR LE TABLEAU DE BORD ---
   const [activeTab, setActiveTab] = useState<'overview' | 'members' | 'orders' | 'map'>('overview');
@@ -109,7 +109,8 @@ const CoopDashboard: React.FC = () => {
           });
           alert("Position GPS capturée avec succès !");
         },
-        (error) => {
+        // CORRECTION 2: On enlève 'error' car on ne l'utilise pas
+        () => {
           alert("Erreur GPS: Veuillez autoriser la localisation dans votre navigateur.");
         }
       );
@@ -150,18 +151,17 @@ const CoopDashboard: React.FC = () => {
         ? [["Nom", "Village", "Culture", "Surface", "Statut"]]
         : [["ID", "Produit", "Quantité", "Date", "Statut"]];
 
-      // Nouvelle méthode robuste pour Vite
       autoTable(doc, {
         head: tableHeaders,
         body: tableData,
         startY: 30,
         theme: 'grid',
-        headStyles: { fillColor: [22, 163, 74] } // Correction: fillColor au lieu de fillStyle
+        headStyles: { fillColor: [22, 163, 74] } 
       });
 
       doc.save(fileName);
-    } catch (error) {
-      console.error("Erreur lors de la génération du PDF", error);
+    } catch (err) {
+      console.error("Erreur lors de la génération du PDF", err);
       alert("Une erreur est survenue lors de la création du PDF.");
     }
   };
@@ -285,8 +285,9 @@ const CoopDashboard: React.FC = () => {
                         <div className="flex items-center gap-4">
                           <div className="w-12 h-12 bg-green-200 rounded-full flex items-center justify-center font-bold text-green-800 text-lg">{m.nom[0]}</div>
                           <div>
+                            {/* CORRECTION 3: On entoure l'icône dans un span pour le titre au survol */}
                             <p className="font-bold text-gray-800 flex items-center gap-2">
-                              {m.nom} {m.gps && <MapPin size={14} className="text-blue-500" title="GPS Enregistré" />}
+                              {m.nom} {m.gps && <span title="GPS Enregistré"><MapPin size={14} className="text-blue-500" /></span>}
                             </p>
                             <p className="text-sm text-gray-500">{m.village} • {m.culture} ({m.surface} ha)</p>
                           </div>
