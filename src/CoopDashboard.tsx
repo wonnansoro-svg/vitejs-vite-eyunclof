@@ -1,10 +1,14 @@
 import React, { useState } from 'react';
 import { 
-  Users, Tractor, Sprout, ShoppingCart, BellRing, 
-  TrendingUp, MapPin, Search, ChevronRight,
-  Package, CheckCircle2, Clock, Plus, X
+  Users, 
+  Sprout, 
+  ShoppingCart, 
+  BellRing, 
+  TrendingUp, 
+  Clock, 
+  Plus, 
+  X 
 } from 'lucide-react';
-
 // --- TYPES ---
 interface Member {
   id: number;
