@@ -28,14 +28,14 @@ import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc } from 'fireb
 // NOUVEAU : Importation des outils d'authentification Firebase
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 
+// Your web app's Firebase configuration
 const firebaseConfig = {
-  // ⚠️ GARDEZ VOS VRAIES CLÉS ICI
-  apiKey: "VOTRE_API_KEY",
-  authDomain: "votre-projet.firebaseapp.com",
-  projectId: "votre-projet",
-  storageBucket: "votre-projet.appspot.com",
-  messagingSenderId: "123456789",
-  appId: "1:123456789:web:abcdef"
+  apiKey: "AIzaSyDwmx-PEtPgd4BMefKxHDnhoYc_9cIZCOY",
+  authDomain: "gescoop-52793.firebaseapp.com",
+  projectId: "gescoop-52793",
+  storageBucket: "gescoop-52793.firebasestorage.app",
+  messagingSenderId: "295844170073",
+  appId: "1:295844170073:web:360a2958d979878202a448"
 };
 
 const app = initializeApp(firebaseConfig);
