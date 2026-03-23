@@ -13,6 +13,7 @@ import 'leaflet/dist/leaflet.css';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
@@ -21,26 +22,32 @@ L.Icon.Default.mergeOptions({
 });
 
 // --- 1. CONFIGURATION FIREBASE ---
-import { initializeApp } from 'firebase/app';
-// NOUVEAU : On importe les outils pour lire et écrire dans la base
 import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc } from 'firebase/firestore';
 
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
 const firebaseConfig = {
-  // ⚠️ GARDEZ VOS VRAIES CLÉS ICI
-  apiKey: "VOTRE_API_KEY",
-  authDomain: "votre-projet.firebaseapp.com",
-  projectId: "votre-projet",
-  storageBucket: "votre-projet.appspot.com",
-  messagingSenderId: "123456789",
-  appId: "1:123456789:web:abcdef"
+  apiKey: "AIzaSyDwmx-PEtPgd4BMefKxHDnhoYc_9cIZCOY",
+  authDomain: "gescoop-52793.firebaseapp.com",
+  projectId: "gescoop-52793",
+  storageBucket: "gescoop-52793.firebasestorage.app",
+  messagingSenderId: "295844170073",
+  appId: "1:295844170073:web:360a2958d979878202a448"
 };
 
-export const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+// Initialize Firebase
+
+// CORRECTION : Plus de "export" ici pour éviter les erreurs de Fast Refresh
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
 
 // --- TYPES ---
 interface Member {
-  id: string; // NOUVEAU : l'ID est maintenant un texte généré par Firebase
+  id: string; 
   nom: string;
   village: string;
   culture: string;
@@ -68,41 +75,36 @@ const CoopDashboard: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [weather, setWeather] = useState<{ temp: number, isSunny: boolean } | null>(null);
 
-  // NOUVEAU : Les listes sont vides au départ, on va les remplir avec Firebase
   const [members, setMembers] = useState<Member[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
 
   const [newMember, setNewMember] = useState<Partial<Member>>({ nom: '', village: '', culture: '', surface: '' });
   const [newOrder, setNewOrder] = useState({ produit: '', qte: '' });
 
-  // --- CHARGEMENT DES DONNÉES (Météo + Firebase) ---
   useEffect(() => {
-    // 1. Météo
     fetch("https://api.open-meteo.com/v1/forecast?latitude=9.5222&longitude=-6.4869&current_weather=true")
       .then(res => res.json())
       .then(data => setWeather({ temp: data.current_weather.temperature, isSunny: data.current_weather.weathercode < 3 }))
-      .catch(err => console.log("Erreur météo", err));
+      .catch(err => console.error("Erreur météo", err));
 
-    // 2. Récupérer les données Firebase
     const fetchDonnees = async () => {
       try {
         const membresSnapshot = await getDocs(collection(db, "membres"));
-        const membresData = membresSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Member));
+        const membresData = membresSnapshot.docs.map(document => ({ id: document.id, ...document.data() } as Member));
         setMembers(membresData);
 
         const commandesSnapshot = await getDocs(collection(db, "commandes"));
-        const commandesData = commandesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
+        const commandesData = commandesSnapshot.docs.map(document => ({ id: document.id, ...document.data() } as Order));
         setOrders(commandesData);
       } catch (error) {
-        console.error("Erreur de connexion à la base de données", error);
+        console.error("Erreur de connexion à la base de données", error); // CORRECTION : utilisation de 'error'
       }
     };
     
-    // On charge les données uniquement si l'utilisateur est connecté
     if (isLoggedIn) {
       fetchDonnees();
     }
-  }, [isLoggedIn]); // Se déclenche à la connexion
+  }, [isLoggedIn]);
 
   const handleAuth = (e: React.FormEvent) => {
     e.preventDefault();
@@ -120,18 +122,16 @@ const CoopDashboard: React.FC = () => {
     }
   };
 
-  // --- ENREGISTRER DANS FIREBASE ---
   const addMember = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       const membreAEnvoyer = { ...newMember, statut: "Actif" };
-      // Envoi sur le Cloud
       const docRef = await addDoc(collection(db, "membres"), membreAEnvoyer);
-      // Mise à jour de l'écran
       setMembers([{ id: docRef.id, ...membreAEnvoyer } as Member, ...members]);
       setNewMember({ nom: '', village: '', culture: '', surface: '' });
       setShowForm(false);
     } catch (error) {
+      console.error(error); // CORRECTION : utilisation de 'error'
       alert("Erreur lors de l'enregistrement du membre.");
     }
   };
@@ -142,6 +142,7 @@ const CoopDashboard: React.FC = () => {
         await deleteDoc(doc(db, "membres", id));
         setMembers(members.filter(m => m.id !== id));
       } catch (error) {
+        console.error(error); // CORRECTION : utilisation de 'error'
         alert("Erreur lors de la suppression.");
       }
     }
@@ -156,6 +157,7 @@ const CoopDashboard: React.FC = () => {
       setNewOrder({ produit: '', qte: '' });
       setShowForm(false);
     } catch (error) {
+      console.error(error); // CORRECTION : utilisation de 'error'
       alert("Erreur lors de l'enregistrement de la commande.");
     }
   };
@@ -166,6 +168,7 @@ const CoopDashboard: React.FC = () => {
         await deleteDoc(doc(db, "commandes", id));
         setOrders(orders.filter(o => o.id !== id));
       } catch (error) {
+        console.error(error); // CORRECTION : utilisation de 'error'
         alert("Erreur lors de la suppression.");
       }
     }
@@ -286,7 +289,8 @@ const CoopDashboard: React.FC = () => {
             <p className="text-green-200 text-sm font-medium">Coopérative Agricole de Boundiali</p>
             <h1 className="text-2xl md:text-3xl font-bold">Tableau de Bord Administratif</h1>
           </div>
-          <button onClick={() => setIsLoggedIn(false)} className="bg-red-500 p-2 rounded-lg hover:bg-red-600 transition flex items-center gap-2 text-sm font-bold">
+          {/* CORRECTION : Ajout du titre (title) pour l'accessibilité */}
+          <button title="Déconnexion" onClick={() => setIsLoggedIn(false)} className="bg-red-500 p-2 rounded-lg hover:bg-red-600 transition flex items-center gap-2 text-sm font-bold">
             <LogOut size={16} /> <span className="hidden md:inline">Déconnexion</span>
           </button>
         </div>
@@ -362,7 +366,8 @@ const CoopDashboard: React.FC = () => {
                             <p className="text-sm text-gray-500">{m.village} • {m.culture} ({m.surface} ha)</p>
                           </div>
                         </div>
-                        <button onClick={() => deleteMember(m.id)} className="text-red-400 hover:text-red-600"><Trash2 size={18} /></button>
+                        {/* CORRECTION : Ajout du titre */}
+                        <button title="Supprimer ce membre" onClick={() => deleteMember(m.id)} className="text-red-400 hover:text-red-600"><Trash2 size={18} /></button>
                       </div>
                     ))}
                     {filteredMembers.length === 0 && <p className="text-center text-gray-500 py-4">Aucun résultat trouvé ou liste vide.</p>}
@@ -380,7 +385,8 @@ const CoopDashboard: React.FC = () => {
                             <Clock size={14} /> {o.statut} • {o.date}
                           </div>
                         </div>
-                        <button onClick={() => deleteOrder(o.id)} className="text-red-400 hover:text-red-600"><Trash2 size={18} /></button>
+                        {/* CORRECTION : Ajout du titre */}
+                        <button title="Supprimer cette commande" onClick={() => deleteOrder(o.id)} className="text-red-400 hover:text-red-600"><Trash2 size={18} /></button>
                       </div>
                     ))}
                     {filteredOrders.length === 0 && <p className="text-center text-gray-500 py-4">Aucune commande.</p>}
@@ -444,7 +450,8 @@ const CoopDashboard: React.FC = () => {
           <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-bold italic text-gray-800">{activeTab === 'members' ? 'Ajouter' : 'Commande'}</h2>
-              <button onClick={() => setShowForm(false)} className="text-gray-400 bg-gray-100 p-2 rounded-full"><X size={20}/></button>
+              {/* CORRECTION : Ajout du titre pour fermer */}
+              <button title="Fermer" onClick={() => setShowForm(false)} className="text-gray-400 bg-gray-100 p-2 rounded-full"><X size={20}/></button>
             </div>
             {activeTab === 'members' ? (
               <form onSubmit={addMember} className="space-y-4">
@@ -459,7 +466,8 @@ const CoopDashboard: React.FC = () => {
                     <p className="font-bold text-blue-800">Localisation</p>
                     <p className="text-blue-600 text-xs">{newMember.gps ? "OK" : "Non définie"}</p>
                   </div>
-                  <button type="button" onClick={captureGPS} className="bg-blue-600 text-white p-2 rounded-lg font-bold"><Crosshair size={16} /></button>
+                  {/* CORRECTION : Ajout du titre */}
+                  <button title="Capturer le GPS" type="button" onClick={captureGPS} className="bg-blue-600 text-white p-2 rounded-lg font-bold"><Crosshair size={16} /></button>
                 </div>
                 <button type="submit" className="w-full bg-green-600 text-white py-4 rounded-xl font-bold hover:bg-green-700 transition">Enregistrer</button>
               </form>
@@ -489,4 +497,4 @@ const CoopDashboard: React.FC = () => {
   );
 };
 
-export default CoopDashboard;s
+export default CoopDashboard;
