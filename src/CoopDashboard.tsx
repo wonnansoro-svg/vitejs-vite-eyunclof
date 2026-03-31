@@ -12,7 +12,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable'; 
 
 import 'leaflet/dist/leaflet.css';
-import { MapContainer, TileLayer, Marker, Popup, Polygon, Polyline, useMap, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polygon, Polyline, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import * as turf from '@turf/turf';
 
@@ -77,14 +77,13 @@ interface Member {
 interface Order { id: string; produit: string; qte: string; date: string; cout: string; statut: string; }
 interface StockTransaction { id: string; type: 'entree' | 'sortie'; produit: string; qte: string; date: string; cout: string; acteur: string; }
 
-// Composant pour recentrer la carte et gérer les clics manuels
-const MapController = ({ onMapClick, centerPos }: { onMapClick: (p: Point) => void, centerPos: Point | null }) => {
-  const map = useMap();
-  useEffect(() => {
-    if (centerPos) { map.setView([centerPos.lat, centerPos.lng], 18, { animate: true }); }
-  }, [centerPos, map]);
-
-  useMapEvents({ click(e) { onMapClick({ lat: e.latlng.lat, lng: e.latlng.lng }); } });
+// Composant pour gérer les clics manuels sur la carte (sans forcer le recentrage)
+const MapController = ({ onMapClick }: { onMapClick: (p: Point) => void }) => {
+  useMapEvents({
+    click(e) {
+      onMapClick({ lat: e.latlng.lat, lng: e.latlng.lng });
+    }
+  });
   return null;
 };
 
@@ -110,8 +109,9 @@ const CoopDashboard: React.FC = () => {
   const [isTracking, setIsTracking] = useState(false);
   const trackingWatchId = useRef<number | null>(null);
   
-  // Correction: Référence à la carte pour le bouton de centrage
   const [mapRef, setMapRef] = useState<L.Map | null>(null);
+  // Référence pour savoir si on a déjà centré la caméra au démarrage
+  const initialCenterDone = useRef<boolean>(false);
 
   const [newMember, setNewMember] = useState<Partial<Member>>({ nom: '', village: '', culture: '', surface: '', date: '', cout: '' });
   const [newOrder, setNewOrder] = useState<Partial<Order>>({ produit: '', qte: '', date: '', cout: '' });
@@ -150,6 +150,13 @@ const CoopDashboard: React.FC = () => {
         (pos) => {
           const newPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
           setCurrentLocation(newPos);
+
+          // On centre la carte UNE SEULE FOIS quand on capte le GPS au lancement du wizard
+          if (!initialCenterDone.current && mapRef) {
+            mapRef.setView([newPos.lat, newPos.lng], 16, { animate: true });
+            initialCenterDone.current = true;
+          }
+
           if (isTracking) {
             setParcelPoints(prev => {
               if (prev.length > 0) {
@@ -168,11 +175,12 @@ const CoopDashboard: React.FC = () => {
       trackingWatchId.current = id;
     }
     return () => { if (trackingWatchId.current !== null) navigator.geolocation.clearWatch(trackingWatchId.current); };
-  }, [wizardStep, isTracking]);
+  }, [wizardStep, isTracking, mapRef]);
 
   const startWizard = () => {
     setParcelPoints([]);
     setNewMember({ nom: '', village: '', culture: '', surface: '', date: new Date().toISOString().split('T')[0], cout: '5000' });
+    initialCenterDone.current = false; // On réinitialise le "premier centrage"
     setWizardStep(1);
   };
 
@@ -214,7 +222,6 @@ const CoopDashboard: React.FC = () => {
   const addStockTransaction = async (e: React.FormEvent) => { e.preventDefault(); try { const docRef = await addDoc(collection(db, "magasin"), newStock); setStock([{ id: docRef.id, ...newStock } as StockTransaction, ...stock]); setShowForm(false); } catch (err) { alert("Erreur magasin."); } };
   const deleteDocGen = async <T extends { id: string }>(collectionName: string, id: string, setter: React.Dispatch<React.SetStateAction<T[]>>, state: T[]) => { if(window.confirm("Supprimer ?")) { try { await deleteDoc(doc(db, collectionName, id)); setter(state.filter(item => item.id !== id)); } catch (err) { alert("Erreur."); } } };
 
-  // --- CORRECTION : Réintégration des fonctions d'export ---
   const exportToExcel = () => {
     let dataToExport;
     let fileName = 'Export.xlsx';
@@ -264,7 +271,7 @@ const CoopDashboard: React.FC = () => {
       docPDF.setFontSize(16);
       docPDF.text(title, 14, 15);
       docPDF.setFontSize(10);
-      docPDF.text("Coopérative Agricole de KORHOGO (Région du poro)", 14, 22);
+      docPDF.text("Coopérative Agricole de KORHOGO (Région du Poro)", 14, 22);
       
       autoTable(docPDF, {
         head: tableHeaders,
@@ -306,19 +313,21 @@ const CoopDashboard: React.FC = () => {
           <button onClick={() => setWizardStep(0)} className="bg-green-800 p-2 rounded-full"><X size={20}/></button>
         </div>
         <div className="flex-1 relative">
-          {/* Correction : Ajout de la référence de la carte "ref={setMapRef}" */}
-          <MapContainer ref={setMapRef} center={[9.5222, -6.4869]} zoom={16} style={{ height: '100%', width: '100%' }} zoomControl={false}>
+          <MapContainer ref={setMapRef} center={[9.5222, -6.4869]} zoom={12} style={{ height: '100%', width: '100%' }} zoomControl={false}>
             <TileLayer url="https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}" maxZoom={20} subdomains={['mt0','mt1','mt2','mt3']} />
-            <MapController onMapClick={addManualPoint} centerPos={currentLocation} />
+            
+            {/* Nouveau contrôleur qui gère les clics manuels SANS forcer la caméra */}
+            <MapController onMapClick={addManualPoint} />
+            
             {currentLocation && <Marker position={[currentLocation.lat, currentLocation.lng]} icon={userLocationIcon} />}
             {parcelPoints.map((p, i) => <Marker key={i} position={[p.lat, p.lng]} icon={vertexIcon} />)}
             {parcelPoints.length > 1 && <Polyline positions={parcelPoints.map(p => [p.lat, p.lng])} color="#16a34a" weight={4} />}
             {parcelPoints.length >= 3 && <Polygon positions={parcelPoints.map(p => [p.lat, p.lng])} pathOptions={{ color: '#16a34a', fillColor: '#22c55e', fillOpacity: 0.3 }} />}
           </MapContainer>
           <div className="absolute top-4 left-4 right-4 z-[400] flex justify-between">
-            {/* Correction : Utilisation de mapRef pour centrer la carte */}
-            <button onClick={() => { if(currentLocation && mapRef) mapRef.setView([currentLocation.lat, currentLocation.lng], 18) }} className="bg-white p-3 rounded-full shadow-lg text-blue-600"><Navigation size={24} /></button>
-            {parcelPoints.length > 0 && <button onClick={undoLastPoint} className="bg-white p-3 rounded-full shadow-lg text-gray-700 font-bold flex gap-2 items-center"><Undo size={20} /> <span className="text-sm">Annuler</span></button>}
+            {/* Bouton pour se recentrer manuellement sur sa position GPS si on est perdu */}
+            <button onClick={() => { if(currentLocation && mapRef) mapRef.setView([currentLocation.lat, currentLocation.lng], 18, {animate: true}) }} className="bg-white p-3 rounded-full shadow-lg text-blue-600 flex items-center justify-center h-12 w-12"><Navigation size={24} /></button>
+            {parcelPoints.length > 0 && <button onClick={undoLastPoint} className="bg-white px-4 py-2 rounded-full shadow-lg text-gray-700 font-bold flex gap-2 items-center h-12"><Undo size={20} /> <span className="text-sm">Annuler point</span></button>}
           </div>
         </div>
         <div className="bg-white rounded-t-3xl shadow-[0_-10px_20px_rgba(0,0,0,0.1)] z-[210] p-4 pb-8">
@@ -327,7 +336,7 @@ const CoopDashboard: React.FC = () => {
               {isTracking ? <Square size={32} className="mb-2" /> : <Play size={32} className="mb-2 text-green-600" />}
               <span className="font-bold text-sm text-center">{isTracking ? 'Stop Arpentage' : 'Démarrer (Marche)'}</span>
             </button>
-            <button onClick={() => { if(currentLocation) addManualPoint(currentLocation) }} disabled={isTracking || !currentLocation} className="flex-1 flex flex-col items-center justify-center p-4 rounded-2xl bg-gray-50 border-2 border-gray-200 text-gray-700 disabled:opacity-50">
+            <button onClick={() => { if(currentLocation) addManualPoint(currentLocation) }} disabled={isTracking || !currentLocation} className="flex-1 flex flex-col items-center justify-center p-4 rounded-2xl bg-gray-50 border-2 border-gray-200 text-gray-700 disabled:opacity-50 hover:bg-gray-100">
               <MapPin size={32} className="mb-2 text-blue-600" />
               <span className="font-bold text-sm text-center">Placer un point ici</span>
             </button>
@@ -377,7 +386,6 @@ const CoopDashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
-      {/* HEADER PC */}
       <div className="bg-green-700 text-white shadow-lg">
         <div className="max-w-7xl mx-auto px-4 py-6 flex justify-between items-center">
           <div><p className="text-green-200 text-xs md:text-sm font-medium">Coopérative Agricole</p><h1 className="text-xl md:text-3xl font-bold">CAB - KORHOGO</h1></div>
@@ -386,8 +394,6 @@ const CoopDashboard: React.FC = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 mt-6">
-        
-        {/* TABS (Desktop) */}
         <div className="hidden md:flex bg-white rounded-xl shadow-sm mb-6 p-2 border border-gray-100 overflow-x-auto">
           <button onClick={() => setActiveTab('overview')} className={`flex-1 min-w-[120px] py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === 'overview' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-50'}`}><TrendingUp size={18}/> Général</button>
           <button onClick={() => setActiveTab('members')} className={`flex-1 min-w-[120px] py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === 'members' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-50'}`}><Users size={18}/> Membres</button>
@@ -399,7 +405,6 @@ const CoopDashboard: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
 
-            {/* CONTENU OVERVIEW */}
             {activeTab === 'overview' && (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><Users className="text-blue-600 mb-2" size={32} /><p className="text-3xl font-bold">{members.length}</p><p className="text-xs font-medium text-gray-500">Membres</p></div>
@@ -408,7 +413,6 @@ const CoopDashboard: React.FC = () => {
               </div>
             )}
 
-            {/* CONTENUS LISTES */}
             {(activeTab === 'members' || activeTab === 'orders' || activeTab === 'stock') && (
               <div className="bg-white rounded-2xl p-4 md:p-6 shadow-sm border border-gray-100">
                 <div className="flex flex-col md:flex-row justify-between md:items-center mb-6 gap-4">
@@ -420,7 +424,6 @@ const CoopDashboard: React.FC = () => {
                     <input type="text" placeholder="Rechercher..." className="w-full pl-10 pr-4 py-2 bg-gray-50 rounded-lg border border-gray-200" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
                   </div>
                   
-                  {/* Correction : Réintégration des boutons d'export PDF et EXCEL */}
                   <div className="flex flex-wrap gap-2">
                     <button onClick={exportToExcel} className="bg-green-50 text-green-700 border border-green-200 px-3 py-2 rounded-lg text-sm font-bold hover:bg-green-100 flex items-center gap-2"><FileSpreadsheet size={16} /> Excel</button>
                     <button onClick={exportToPDF} className="bg-red-50 text-red-700 border border-red-200 px-3 py-2 rounded-lg text-sm font-bold hover:bg-red-100 flex items-center gap-2"><FileText size={16} /> PDF</button>
@@ -433,7 +436,6 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 </div>
 
-                {/* LISTE MEMBRES */}
                 {activeTab === 'members' && (
                   <div className="grid gap-4">
                     {filteredMembers.map(m => (
@@ -451,7 +453,6 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 )}
 
-                {/* LISTE STOCK */}
                 {activeTab === 'stock' && (
                   <div className="grid gap-4">
                     {filteredStock.map(s => (
@@ -472,7 +473,6 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 )}
 
-                {/* LISTE COMMANDES */}
                 {activeTab === 'orders' && (
                   <div className="grid gap-4">
                     {filteredOrders.map(o => (
@@ -491,7 +491,6 @@ const CoopDashboard: React.FC = () => {
               </div>
             )}
 
-            {/* CONTENU CARTE GLOBALE */}
             {activeTab === 'map' && (
               <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 h-[600px] flex flex-col">
                 <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-gray-800"><MapIcon className="text-green-600" /> Carte des Parcelles</h2>
@@ -515,10 +514,9 @@ const CoopDashboard: React.FC = () => {
             )}
           </div>
 
-          {/* WIDGET METEO (Desktop) */}
           <div className="hidden lg:block space-y-6">
             <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-2xl border border-blue-200">
-              <h3 className="font-bold text-blue-800 mb-4 flex items-center gap-2"><CloudRain className="text-blue-600" /> Météo -Poro</h3>
+              <h3 className="font-bold text-blue-800 mb-4 flex items-center gap-2"><CloudRain className="text-blue-600" /> Météo - Poro</h3>
               {weather ? (
                 <><div className="flex items-center justify-between mb-4"><div><p className="text-4xl font-black text-blue-900">{weather.temp}°C</p><p className="text-sm text-blue-700">KORHOGO</p></div>{weather.isSunny ? <Sun size={48} className="text-yellow-500" /> : <CloudRain size={48} className="text-blue-400" />}</div></>
               ) : (<p className="text-sm text-blue-700">Chargement...</p>)}
@@ -528,7 +526,6 @@ const CoopDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* MODALE POUR MAGASIN ET COMMANDES */}
       {showForm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[100] backdrop-blur-sm overflow-y-auto">
           <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl my-8">
@@ -565,7 +562,6 @@ const CoopDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* BOUTON FLOTTANT (FAB) POUR DEMARRER LE WIZARD (MOBILE FIRST) */}
       <button 
         onClick={startWizard}
         className="fixed bottom-20 right-4 md:bottom-8 md:right-8 bg-green-600 text-white w-16 h-16 rounded-full shadow-[0_10px_25px_rgba(22,163,74,0.5)] flex items-center justify-center hover:bg-green-700 transition-transform active:scale-95 z-[100]"
@@ -574,7 +570,6 @@ const CoopDashboard: React.FC = () => {
         <div className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold px-2 py-1 rounded-full shadow-md">+ Nouveau</div>
       </button>
 
-      {/* NAVIGATION MOBILE EN BAS */}
       <div className="md:hidden fixed bottom-0 w-full bg-white border-t flex items-center justify-around py-3 px-2 z-[90] shadow-[0_-5px_15px_rgba(0,0,0,0.05)] overflow-x-auto">
         <button onClick={() => setActiveTab('overview')} className={`flex flex-col items-center flex-1 min-w-[60px] ${activeTab === 'overview' ? 'text-green-600' : 'text-gray-400'}`}><TrendingUp size={20} /><span className="text-[9px] font-bold mt-1">Général</span></button>
         <button onClick={() => setActiveTab('members')} className={`flex flex-col items-center flex-1 min-w-[60px] ${activeTab === 'members' ? 'text-green-600' : 'text-gray-400'}`}><Users size={20} /><span className="text-[9px] font-bold mt-1">Membres</span></button>
