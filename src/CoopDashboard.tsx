@@ -261,7 +261,7 @@ const CoopDashboard: React.FC = () => {
       docPDF.setFontSize(16);
       docPDF.text(title, 14, 15);
       docPDF.setFontSize(10);
-      docPDF.text("Coopérative Agricole de Boundiali (Région de la Bagoué)", 14, 22);
+      docPDF.text("Coopérative Agricole de KORHOGO (Région de la Bagoué)", 14, 22);
       
       autoTable(docPDF, {
         head: tableHeaders,
@@ -291,7 +291,7 @@ const CoopDashboard: React.FC = () => {
           <div className="flex justify-center mb-6">
             <div className="bg-green-100 p-4 rounded-full"><Sprout size={48} className="text-green-600" /></div>
           </div>
-          <h1 className="text-2xl font-bold text-center text-gray-800 mb-2">CAB Boundiali</h1>
+          <h1 className="text-2xl font-bold text-center text-gray-800 mb-2">CAB KORHOGO</h1>
           <p className="text-center text-gray-500 mb-8 font-medium">{authMode === 'register' ? 'Créer un compte administrateur' : 'Connexion à votre espace'}</p>
           <form onSubmit={handleAuth} className="space-y-4">
             <div className="relative">
@@ -318,7 +318,7 @@ const CoopDashboard: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 md:px-6 py-8 flex justify-between items-center">
           <div>
             <p className="text-green-200 text-sm font-medium">Coopérative Agricole</p>
-            <h1 className="text-2xl md:text-3xl font-bold">CAB - Boundiali</h1>
+            <h1 className="text-2xl md:text-3xl font-bold">CAB - KORHOGO</h1>
           </div>
           {/* CORRECTION : Utilisation de handleLogout */}
           <button title="Déconnexion" onClick={handleLogout} className="bg-red-500 p-2 rounded-lg hover:bg-red-600 transition flex items-center gap-2 text-sm font-bold"><LogOut size={16} /><span className="hidden md:inline">Déconnexion</span></button>
@@ -439,7 +439,7 @@ const CoopDashboard: React.FC = () => {
             <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-2xl border border-blue-200">
               <h3 className="font-bold text-blue-800 mb-4 flex items-center gap-2"><CloudRain className="text-blue-600" /> Météo - Bagoué</h3>
               {weather ? (
-                <><div className="flex items-center justify-between mb-4"><div><p className="text-4xl font-black text-blue-900">{weather.temp}°C</p><p className="text-sm text-blue-700">Boundiali</p></div>{weather.isSunny ? <Sun size={48} className="text-yellow-500" /> : <CloudRain size={48} className="text-blue-400" />}</div><p className="text-sm text-blue-900 bg-white/60 p-3 rounded-lg">Données satellite en temps réel.</p></>
+                <><div className="flex items-center justify-between mb-4"><div><p className="text-4xl font-black text-blue-900">{weather.temp}°C</p><p className="text-sm text-blue-700">KORHOGO</p></div>{weather.isSunny ? <Sun size={48} className="text-yellow-500" /> : <CloudRain size={48} className="text-blue-400" />}</div><p className="text-sm text-blue-900 bg-white/60 p-3 rounded-lg">Données satellite en temps réel.</p></>
               ) : (<p className="text-sm text-blue-700">Chargement...</p>)}
             </div>
           </div>
