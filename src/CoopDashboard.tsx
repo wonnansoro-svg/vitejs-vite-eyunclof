@@ -109,6 +109,9 @@ const CoopDashboard: React.FC = () => {
   const [currentLocation, setCurrentLocation] = useState<Point | null>(null);
   const [isTracking, setIsTracking] = useState(false);
   const trackingWatchId = useRef<number | null>(null);
+  
+  // Correction: Référence à la carte pour le bouton de centrage
+  const [mapRef, setMapRef] = useState<L.Map | null>(null);
 
   const [newMember, setNewMember] = useState<Partial<Member>>({ nom: '', village: '', culture: '', surface: '', date: '', cout: '' });
   const [newOrder, setNewOrder] = useState<Partial<Order>>({ produit: '', qte: '', date: '', cout: '' });
@@ -211,8 +214,69 @@ const CoopDashboard: React.FC = () => {
   const addStockTransaction = async (e: React.FormEvent) => { e.preventDefault(); try { const docRef = await addDoc(collection(db, "magasin"), newStock); setStock([{ id: docRef.id, ...newStock } as StockTransaction, ...stock]); setShowForm(false); } catch (err) { alert("Erreur magasin."); } };
   const deleteDocGen = async <T extends { id: string }>(collectionName: string, id: string, setter: React.Dispatch<React.SetStateAction<T[]>>, state: T[]) => { if(window.confirm("Supprimer ?")) { try { await deleteDoc(doc(db, collectionName, id)); setter(state.filter(item => item.id !== id)); } catch (err) { alert("Erreur."); } } };
 
-  const exportToExcel = () => { /* Logique d'export existante */ };
-  const exportToPDF = () => { /* Logique d'export existante */ };
+  // --- CORRECTION : Réintégration des fonctions d'export ---
+  const exportToExcel = () => {
+    let dataToExport;
+    let fileName = 'Export.xlsx';
+
+    if (activeTab === 'members') {
+      dataToExport = members.map(m => ({ Nom: m.nom, Village: m.village, Culture: m.culture, Surface: `${m.surface} ha`, Date: m.date, Frais: `${m.cout} FCFA`, Statut: m.statut }));
+      fileName = 'Liste_Membres_CAB.xlsx';
+    } else if (activeTab === 'orders') {
+      dataToExport = orders.map(o => ({ Produit: o.produit, Quantite: o.qte, Date: o.date, Cout: `${o.cout} FCFA`, Statut: o.statut }));
+      fileName = 'Liste_Commandes_CAB.xlsx';
+    } else {
+      dataToExport = stock.map(s => ({ Type: s.type === 'entree' ? 'Entrée' : 'Sortie', Produit: s.produit, Quantite: s.qte, Date: s.date, Valeur: `${s.cout} FCFA`, Acteur: s.acteur }));
+      fileName = 'Historique_Magasin_CAB.xlsx';
+    }
+    
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Données");
+    XLSX.writeFile(workbook, fileName);
+  };
+
+  const exportToPDF = () => {
+    try {
+      const docPDF = new jsPDF();
+      let title = '';
+      let tableHeaders: string[][] = [];
+      let tableData: string[][] = [];
+      let fileName = 'Rapport.pdf';
+
+      if (activeTab === 'members') {
+        title = 'ANNUAIRE DES MEMBRES - CAB';
+        fileName = 'Rapport_Membres.pdf';
+        tableHeaders = [["Nom", "Village", "Culture", "Date", "Frais", "Statut"]];
+        tableData = members.map(m => [m.nom, m.village, m.culture, m.date, `${m.cout} FCFA`, m.statut]);
+      } else if (activeTab === 'orders') {
+        title = 'SUIVI DES COMMANDES - CAB';
+        fileName = 'Rapport_Commandes.pdf';
+        tableHeaders = [["Produit", "Quantité", "Date", "Coût", "Statut"]];
+        tableData = orders.map(o => [o.produit || "", o.qte || "", o.date || "", `${o.cout} FCFA`, o.statut || ""]);
+      } else {
+        title = 'HISTORIQUE DU MAGASIN (STOCKS) - CAB';
+        fileName = 'Rapport_Magasin.pdf';
+        tableHeaders = [["Opération", "Produit", "Quantité", "Date", "Valeur", "Tiers"]];
+        tableData = stock.map(s => [s.type === 'entree' ? 'Entrée' : 'Sortie', s.produit, s.qte, s.date, `${s.cout} FCFA`, s.acteur]);
+      }
+
+      docPDF.setFontSize(16);
+      docPDF.text(title, 14, 15);
+      docPDF.setFontSize(10);
+      docPDF.text("Coopérative Agricole de KORHOGO (Région du poro)", 14, 22);
+      
+      autoTable(docPDF, {
+        head: tableHeaders,
+        body: tableData,
+        startY: 30,
+        theme: 'grid',
+        headStyles: { fillColor: [22, 163, 74] } 
+      });
+
+      docPDF.save(fileName);
+    } catch (err) { console.error(err); alert("Erreur PDF."); }
+  };
 
   if (authLoading) return <div className="min-h-screen bg-green-50 flex items-center justify-center"><p className="font-bold text-green-700">Chargement...</p></div>;
   
@@ -242,7 +306,8 @@ const CoopDashboard: React.FC = () => {
           <button onClick={() => setWizardStep(0)} className="bg-green-800 p-2 rounded-full"><X size={20}/></button>
         </div>
         <div className="flex-1 relative">
-          <MapContainer center={[9.5222, -6.4869]} zoom={16} style={{ height: '100%', width: '100%' }} zoomControl={false}>
+          {/* Correction : Ajout de la référence de la carte "ref={setMapRef}" */}
+          <MapContainer ref={setMapRef} center={[9.5222, -6.4869]} zoom={16} style={{ height: '100%', width: '100%' }} zoomControl={false}>
             <TileLayer url="https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}" maxZoom={20} subdomains={['mt0','mt1','mt2','mt3']} />
             <MapController onMapClick={addManualPoint} centerPos={currentLocation} />
             {currentLocation && <Marker position={[currentLocation.lat, currentLocation.lng]} icon={userLocationIcon} />}
@@ -251,7 +316,8 @@ const CoopDashboard: React.FC = () => {
             {parcelPoints.length >= 3 && <Polygon positions={parcelPoints.map(p => [p.lat, p.lng])} pathOptions={{ color: '#16a34a', fillColor: '#22c55e', fillOpacity: 0.3 }} />}
           </MapContainer>
           <div className="absolute top-4 left-4 right-4 z-[400] flex justify-between">
-            <button onClick={() => { if(currentLocation) map.setView([currentLocation.lat, currentLocation.lng], 18) }} className="bg-white p-3 rounded-full shadow-lg text-blue-600"><Navigation size={24} /></button>
+            {/* Correction : Utilisation de mapRef pour centrer la carte */}
+            <button onClick={() => { if(currentLocation && mapRef) mapRef.setView([currentLocation.lat, currentLocation.lng], 18) }} className="bg-white p-3 rounded-full shadow-lg text-blue-600"><Navigation size={24} /></button>
             {parcelPoints.length > 0 && <button onClick={undoLastPoint} className="bg-white p-3 rounded-full shadow-lg text-gray-700 font-bold flex gap-2 items-center"><Undo size={20} /> <span className="text-sm">Annuler</span></button>}
           </div>
         </div>
@@ -321,7 +387,7 @@ const CoopDashboard: React.FC = () => {
 
       <div className="max-w-7xl mx-auto px-4 mt-6">
         
-        {/* TABS (Desktop) - COMPLET AVEC TOUTES LES ICONES */}
+        {/* TABS (Desktop) */}
         <div className="hidden md:flex bg-white rounded-xl shadow-sm mb-6 p-2 border border-gray-100 overflow-x-auto">
           <button onClick={() => setActiveTab('overview')} className={`flex-1 min-w-[120px] py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === 'overview' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-50'}`}><TrendingUp size={18}/> Général</button>
           <button onClick={() => setActiveTab('members')} className={`flex-1 min-w-[120px] py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === 'members' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-50'}`}><Users size={18}/> Membres</button>
@@ -342,7 +408,7 @@ const CoopDashboard: React.FC = () => {
               </div>
             )}
 
-            {/* CONTENUS LISTES (MEMBRES / STOCK / ORDERS) */}
+            {/* CONTENUS LISTES */}
             {(activeTab === 'members' || activeTab === 'orders' || activeTab === 'stock') && (
               <div className="bg-white rounded-2xl p-4 md:p-6 shadow-sm border border-gray-100">
                 <div className="flex flex-col md:flex-row justify-between md:items-center mb-6 gap-4">
@@ -354,12 +420,17 @@ const CoopDashboard: React.FC = () => {
                     <input type="text" placeholder="Rechercher..." className="w-full pl-10 pr-4 py-2 bg-gray-50 rounded-lg border border-gray-200" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
                   </div>
                   
-                  {/* Boutons d'ajout pour Magasin et Commandes (Les membres utilisent le Wizard maintenant) */}
-                  {(activeTab === 'orders' || activeTab === 'stock') && (
-                     <button onClick={() => setShowForm(true)} className={`${activeTab === 'stock' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-green-600 hover:bg-green-700'} text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2 font-bold`}>
-                       <Plus size={18} /> Nouveau
-                     </button>
-                  )}
+                  {/* Correction : Réintégration des boutons d'export PDF et EXCEL */}
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={exportToExcel} className="bg-green-50 text-green-700 border border-green-200 px-3 py-2 rounded-lg text-sm font-bold hover:bg-green-100 flex items-center gap-2"><FileSpreadsheet size={16} /> Excel</button>
+                    <button onClick={exportToPDF} className="bg-red-50 text-red-700 border border-red-200 px-3 py-2 rounded-lg text-sm font-bold hover:bg-red-100 flex items-center gap-2"><FileText size={16} /> PDF</button>
+                    
+                    {(activeTab === 'orders' || activeTab === 'stock') && (
+                       <button onClick={() => setShowForm(true)} className={`${activeTab === 'stock' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-green-600 hover:bg-green-700'} text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2 font-bold ml-2`}>
+                         <Plus size={18} /> Nouveau
+                       </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* LISTE MEMBRES */}
@@ -447,7 +518,7 @@ const CoopDashboard: React.FC = () => {
           {/* WIDGET METEO (Desktop) */}
           <div className="hidden lg:block space-y-6">
             <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-2xl border border-blue-200">
-              <h3 className="font-bold text-blue-800 mb-4 flex items-center gap-2"><CloudRain className="text-blue-600" /> Météo - Poro</h3>
+              <h3 className="font-bold text-blue-800 mb-4 flex items-center gap-2"><CloudRain className="text-blue-600" /> Météo -Poro</h3>
               {weather ? (
                 <><div className="flex items-center justify-between mb-4"><div><p className="text-4xl font-black text-blue-900">{weather.temp}°C</p><p className="text-sm text-blue-700">KORHOGO</p></div>{weather.isSunny ? <Sun size={48} className="text-yellow-500" /> : <CloudRain size={48} className="text-blue-400" />}</div></>
               ) : (<p className="text-sm text-blue-700">Chargement...</p>)}
@@ -503,7 +574,7 @@ const CoopDashboard: React.FC = () => {
         <div className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold px-2 py-1 rounded-full shadow-md">+ Nouveau</div>
       </button>
 
-      {/* NAVIGATION MOBILE EN BAS - COMPLET AVEC TOUTES LES ICONES */}
+      {/* NAVIGATION MOBILE EN BAS */}
       <div className="md:hidden fixed bottom-0 w-full bg-white border-t flex items-center justify-around py-3 px-2 z-[90] shadow-[0_-5px_15px_rgba(0,0,0,0.05)] overflow-x-auto">
         <button onClick={() => setActiveTab('overview')} className={`flex flex-col items-center flex-1 min-w-[60px] ${activeTab === 'overview' ? 'text-green-600' : 'text-gray-400'}`}><TrendingUp size={20} /><span className="text-[9px] font-bold mt-1">Général</span></button>
         <button onClick={() => setActiveTab('members')} className={`flex flex-col items-center flex-1 min-w-[60px] ${activeTab === 'members' ? 'text-green-600' : 'text-gray-400'}`}><Users size={20} /><span className="text-[9px] font-bold mt-1">Membres</span></button>
