@@ -516,7 +516,7 @@ const CoopDashboard: React.FC = () => {
 
           <div className="hidden lg:block space-y-6">
             <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-2xl border border-blue-200">
-              <h3 className="font-bold text-blue-800 mb-4 flex items-center gap-2"><CloudRain className="text-blue-600" /> Météo - Poro</h3>
+              <h3 className="font-bold text-blue-800 mb-4 flex items-center gap-2"><CloudRain className="text-blue-600" /> Météo - hambol</h3>
               {weather ? (
                 <><div className="flex items-center justify-between mb-4"><div><p className="text-4xl font-black text-blue-900">{weather.temp}°C</p><p className="text-sm text-blue-700">NIAKARA</p></div>{weather.isSunny ? <Sun size={48} className="text-yellow-500" /> : <CloudRain size={48} className="text-blue-400" />}</div></>
               ) : (<p className="text-sm text-blue-700">Chargement...</p>)}
