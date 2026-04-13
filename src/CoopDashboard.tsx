@@ -271,7 +271,7 @@ const CoopDashboard: React.FC = () => {
       docPDF.setFontSize(16);
       docPDF.text(title, 14, 15);
       docPDF.setFontSize(10);
-      docPDF.text("Coopérative Agricole de NIAKARA (Région du Poro)", 14, 22);
+      docPDF.text("Coopérative Agricole de NIAKARA (Région du Hambol)", 14, 22);
       
       autoTable(docPDF, {
         head: tableHeaders,
