@@ -271,7 +271,7 @@ const CoopDashboard: React.FC = () => {
       docPDF.setFontSize(16);
       docPDF.text(title, 14, 15);
       docPDF.setFontSize(10);
-      docPDF.text("Coopérative Agricole de KORHOGO (Région du Poro)", 14, 22);
+      docPDF.text("Coopérative Agricole de NIAKARA (Région du Poro)", 14, 22);
       
       autoTable(docPDF, {
         head: tableHeaders,
@@ -292,7 +292,7 @@ const CoopDashboard: React.FC = () => {
       <div className="min-h-screen bg-green-50 flex items-center justify-center p-4">
         <div className="bg-white rounded-3xl shadow-xl w-full max-w-md p-8 border border-green-100">
           <div className="flex justify-center mb-6"><div className="bg-green-100 p-4 rounded-full"><Sprout size={48} className="text-green-600" /></div></div>
-          <h1 className="text-2xl font-bold text-center text-gray-800 mb-2">CAB KORHOGO</h1>
+          <h1 className="text-2xl font-bold text-center text-gray-800 mb-2">CAB NIAKARA</h1>
           <form onSubmit={handleAuth} className="space-y-4">
             <div className="relative"><User className="absolute left-3 top-3 text-gray-400" size={20} /><input required type="email" placeholder="Adresse e-mail" className="w-full pl-10 p-3 bg-gray-50 rounded-xl border border-gray-200" value={credentials.email} onChange={e => setCredentials({...credentials, email: e.target.value})} /></div>
             <div className="relative"><Lock className="absolute left-3 top-3 text-gray-400" size={20} /><input required type="password" placeholder="Mot de passe" className="w-full pl-10 p-3 bg-gray-50 rounded-xl border border-gray-200" value={credentials.password} onChange={e => setCredentials({...credentials, password: e.target.value})} /></div>
@@ -388,7 +388,7 @@ const CoopDashboard: React.FC = () => {
     <div className="min-h-screen bg-gray-50 pb-24">
       <div className="bg-green-700 text-white shadow-lg">
         <div className="max-w-7xl mx-auto px-4 py-6 flex justify-between items-center">
-          <div><p className="text-green-200 text-xs md:text-sm font-medium">Coopérative Agricole</p><h1 className="text-xl md:text-3xl font-bold">CAB - KORHOGO</h1></div>
+          <div><p className="text-green-200 text-xs md:text-sm font-medium">Coopérative Agricole</p><h1 className="text-xl md:text-3xl font-bold">CAB - NIAKARA</h1></div>
           <button onClick={() => signOut(auth)} className="bg-red-500 p-2 rounded-lg text-sm font-bold flex items-center gap-2"><LogOut size={16} /></button>
         </div>
       </div>
@@ -518,7 +518,7 @@ const CoopDashboard: React.FC = () => {
             <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-2xl border border-blue-200">
               <h3 className="font-bold text-blue-800 mb-4 flex items-center gap-2"><CloudRain className="text-blue-600" /> Météo - Poro</h3>
               {weather ? (
-                <><div className="flex items-center justify-between mb-4"><div><p className="text-4xl font-black text-blue-900">{weather.temp}°C</p><p className="text-sm text-blue-700">KORHOGO</p></div>{weather.isSunny ? <Sun size={48} className="text-yellow-500" /> : <CloudRain size={48} className="text-blue-400" />}</div></>
+                <><div className="flex items-center justify-between mb-4"><div><p className="text-4xl font-black text-blue-900">{weather.temp}°C</p><p className="text-sm text-blue-700">NIAKARA</p></div>{weather.isSunny ? <Sun size={48} className="text-yellow-500" /> : <CloudRain size={48} className="text-blue-400" />}</div></>
               ) : (<p className="text-sm text-blue-700">Chargement...</p>)}
             </div>
           </div>
