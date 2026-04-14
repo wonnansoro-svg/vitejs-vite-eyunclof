@@ -456,8 +456,73 @@ const CoopDashboard: React.FC = () => {
   
   const deleteDocGen = async <T extends { id: string }>(collectionName: string, id: string, setter: React.Dispatch<React.SetStateAction<T[]>>, state: T[]) => { if(window.confirm("Supprimer définitivement ?")) { try { await deleteDoc(doc(db, collectionName, id)); setter(state.filter(item => item.id !== id)); } catch (err) { console.error(err); alert("Erreur."); } } };
 
-  const exportToExcel = () => { /* Reste identique */ };
-  const exportToPDF = () => { /* Reste identique */ };
+  // LA CORRECTION DES EXPORTS EST ICI
+  const exportToExcel = () => {
+    let dataToExport;
+    let fileName = 'Export.xlsx';
+
+    if (activeTab === 'members') {
+      dataToExport = members.map(m => ({ Nom: m.nom, Village: m.village, Culture: m.culture, Surface: `${m.surface} ha`, Date: m.date, Frais: `${m.cout} FCFA`, Statut: m.statut }));
+      fileName = 'Liste_Membres.xlsx';
+    } else if (activeTab === 'orders') {
+      dataToExport = orders.map(o => ({ Produit: o.produit, Quantite: o.qte, Date: o.date, Cout: `${o.cout} FCFA`, Statut: o.statut }));
+      fileName = 'Liste_Commandes.xlsx';
+    } else if (activeTab === 'harvests') {
+      dataToExport = harvests.map(h => ({ Type: h.type === 'recolte' ? 'Récolte' : 'Vente', Culture: h.culture, Quantite: `${h.qte} T`, Date: h.date, Montant: h.type === 'vente' ? `${h.montant} FCFA` : '-', Acteur: h.acteur || '-' }));
+      fileName = 'Suivi_Recoltes_Ventes.xlsx';
+    } else {
+      dataToExport = stock.map(s => ({ Type: s.type === 'entree' ? 'Entrée' : 'Sortie', Produit: s.produit, Quantite: s.qte, Date: s.date, Valeur: `${s.cout} FCFA`, Acteur: s.acteur }));
+      fileName = 'Historique_Magasin.xlsx';
+    }
+    
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Données");
+    XLSX.writeFile(workbook, fileName);
+  };
+
+  const exportToPDF = () => {
+    try {
+      const docPDF = new jsPDF();
+      let title = '';
+      let tableHeaders: string[][] = [];
+      let tableData: string[][] = [];
+      let fileName = 'Rapport.pdf';
+
+      if (activeTab === 'members') {
+        title = 'ANNUAIRE DES PAYSANS';
+        fileName = 'Rapport_Membres.pdf';
+        tableHeaders = [["Nom", "Village", "Culture", "Date", "Frais", "Statut"]];
+        tableData = members.map(m => [m.nom, m.village, m.culture, m.date, `${m.cout} FCFA`, m.statut]);
+      } else if (activeTab === 'orders') {
+        title = 'SUIVI DES ACHATS';
+        fileName = 'Rapport_Commandes.pdf';
+        tableHeaders = [["Produit", "Quantité", "Date", "Coût", "Statut"]];
+        tableData = orders.map(o => [o.produit || "", o.qte || "", o.date || "", `${o.cout} FCFA`, o.statut || ""]);
+      } else if (activeTab === 'harvests') {
+        title = 'SUIVI DES RÉCOLTES & VENTES';
+        fileName = 'Rapport_Recoltes.pdf';
+        tableHeaders = [["Opération", "Culture", "Quantité (T)", "Date", "Montant (FCFA)", "Tiers"]];
+        tableData = harvests.map(h => [h.type === 'recolte' ? 'Récolte' : 'Vente', h.culture, h.qte.toString(), h.date, h.type === 'vente' ? h.montant?.toString() || "0" : "-", h.acteur || "-"]);
+      } else {
+        title = 'HISTORIQUE DU MAGASIN (STOCKS)';
+        fileName = 'Rapport_Magasin.pdf';
+        tableHeaders = [["Opération", "Produit", "Quantité", "Date", "Valeur", "Tiers"]];
+        tableData = stock.map(s => [s.type === 'entree' ? 'Entrée' : 'Sortie', s.produit, s.qte, s.date, `${s.cout} FCFA`, s.acteur]);
+      }
+
+      docPDF.setFontSize(16);
+      docPDF.text(title, 14, 15);
+      docPDF.setFontSize(10);
+      docPDF.text(coopProfile?.nom || "Coopérative", 14, 22);
+      
+      autoTable(docPDF, { head: tableHeaders, body: tableData, startY: 30, theme: 'grid', headStyles: { fillColor: [27, 67, 50] } });
+      docPDF.save(fileName);
+    } catch (err) { 
+      console.error(err); 
+      alert("Erreur PDF."); 
+    }
+  };
 
   if (authLoading) return <div className="min-h-screen bg-[#EAE6DF] flex items-center justify-center"><p className="font-medium text-stone-600 animate-pulse">Chargement de votre espace...</p></div>;
   
@@ -765,7 +830,6 @@ const CoopDashboard: React.FC = () => {
                   
                   <div className="flex flex-wrap items-center gap-3">
                     
-                    {/* BOUTON SCANNER QR (Seulement dans l'onglet Membres) */}
                     {activeTab === 'members' && (
                       <button onClick={() => setShowScanner(true)} className="bg-emerald-100 text-emerald-800 p-3 rounded-2xl hover:bg-emerald-200 transition-all font-bold flex items-center gap-2 shadow-sm" title="Scanner un Reçu">
                         <Scan size={20} className="text-emerald-600" /> Scanner
@@ -810,7 +874,7 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 )}
 
-                {/* AUTRES LISTES (Identiques) */}
+                {/* LISTE DES RÉCOLTES ET VENTES */}
                 {activeTab === 'harvests' && (
                   <div className="grid gap-4">
                      {filteredHarvests.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Aucune récolte ou vente enregistrée.</p> : null}
@@ -830,6 +894,7 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 )}
 
+                {/* LISTE DES STOCKS */}
                 {activeTab === 'stock' && (
                   <div className="grid gap-4">
                     {filteredStock.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Le magasin est vide.</p> : null}
@@ -849,6 +914,7 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 )}
 
+                {/* LISTE DES COMMANDES */}
                 {activeTab === 'orders' && (
                   <div className="grid gap-4">
                     {filteredOrders.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Aucune dépense enregistrée.</p> : null}
@@ -869,7 +935,6 @@ const CoopDashboard: React.FC = () => {
 
             {activeTab === 'settings' && (
               <div className="space-y-6">
-                {/* NOUVEAU : Bloc Info Multi-Tenant pour l'administrateur */}
                 {appUser?.role === 'admin' && (
                   <div className="bg-emerald-50 rounded-[2.5rem] p-8 border border-emerald-200 flex flex-col md:flex-row gap-6 items-center justify-between shadow-sm">
                     <div>
@@ -925,13 +990,11 @@ const CoopDashboard: React.FC = () => {
                   <h2 className="text-2xl font-black text-stone-800 tracking-tight">Cadastre des Producteurs</h2>
                 </div>
                 
-                {/* LA CORRECTION DE LA CARTE EST ICI : on force le montage avec une 'key' unique pour l'onglet map */}
                 <div key={`map-container-${activeTab}`} className="flex-1 rounded-[2rem] overflow-hidden border-2 border-stone-100 z-0 relative shadow-inner">
                   {coopProfile && (
                     <MapContainer center={[coopProfile.lat, coopProfile.lng]} zoom={10} style={{ height: '100%', width: '100%' }}>
                       <TileLayer url="https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}" maxZoom={20} subdomains={['mt0','mt1','mt2','mt3']} />
                       
-                      {/* Utilitaire Leaflet pour corriger la carte grise */}
                       <MapInvalidator />
                       <AutoFitBounds members={members} defaultCenter={{lat: coopProfile.lat, lng: coopProfile.lng}} />
                       
@@ -975,7 +1038,6 @@ const CoopDashboard: React.FC = () => {
           </div>
 
           <div className="space-y-8 mt-4 lg:mt-0">
-            {/* Widget Météo Humanisé */}
             <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-8 rounded-[2.5rem] border border-blue-100 relative overflow-hidden shadow-sm">
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/40 rounded-full blur-2xl -translate-y-1/2 translate-x-1/4"></div>
               <h3 className="font-black text-blue-900 mb-6 flex items-center gap-3 text-lg"><CloudRain className="text-blue-500" size={24}/> La météo au siège</h3>
@@ -993,7 +1055,6 @@ const CoopDashboard: React.FC = () => {
               <p className="text-[11px] font-bold text-blue-400/80 uppercase tracking-widest mt-6">COORD. {coopProfile?.lat?.toFixed(4)}, {coopProfile?.lng?.toFixed(4)}</p>
             </div>
             
-            {/* Widget Info Banques */}
             <div className="bg-stone-800 p-8 rounded-[2.5rem] text-stone-300 relative overflow-hidden shadow-xl shadow-stone-900/10">
                <div className="absolute -bottom-10 -right-10 opacity-10"><Banknote size={150} /></div>
                <h3 className="font-black text-white mb-4 flex items-center gap-3 text-lg"><Banknote size={24} className="text-emerald-400"/> Prêts & Financements</h3>
@@ -1005,7 +1066,6 @@ const CoopDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* FORMULAIRE MODAL (RÉCOLTES, ACHATS, MAGASIN) */}
       {showForm && (
         <div className="fixed inset-0 bg-stone-900/40 flex items-center justify-center p-4 z-[100] backdrop-blur-md overflow-y-auto font-sans">
           <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-md shadow-2xl my-8 border border-stone-100">
@@ -1016,7 +1076,6 @@ const CoopDashboard: React.FC = () => {
               <button onClick={() => setShowForm(false)} aria-label="Fermer le formulaire" className="text-stone-400 bg-stone-100 hover:bg-stone-200 hover:text-stone-600 p-3 rounded-full transition-colors"><X size={20}/></button>
             </div>
 
-            {/* Formulaire Récoltes et Ventes */}
             {activeTab === 'harvests' && (
               <form onSubmit={addHarvestTransaction} className="space-y-5">
                 <div className="flex gap-2 p-1 bg-stone-100 rounded-2xl mb-6">
@@ -1077,12 +1136,10 @@ const CoopDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* BOUTON FLOTTANT ACTION RAPIDE */}
       <button aria-label="Tracer une parcelle" onClick={startWizard} className="fixed bottom-24 right-6 md:bottom-10 md:right-10 bg-emerald-500 text-white w-16 h-16 rounded-[1.2rem] shadow-[0_15px_30px_rgba(16,185,129,0.4)] flex items-center justify-center hover:bg-emerald-400 transition-all hover:scale-110 active:scale-95 z-[90] border-2 border-emerald-400 rotate-3 hover:rotate-0">
         <MapPin size={28} />
       </button>
 
-      {/* NAVIGATION MOBILE - Fond Flouté organique */}
       <div className="md:hidden fixed bottom-0 w-full bg-white/90 backdrop-blur-xl border-t border-stone-100 flex items-center justify-around py-3 px-2 z-[80] shadow-[0_-15px_40px_rgba(0,0,0,0.05)] overflow-x-auto pb-safe">
         <button onClick={() => setActiveTab('overview')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'overview' ? 'text-[#1b4332]' : 'text-stone-400'}`}><TrendingUp size={22} /><span className="text-[10px] font-bold mt-1.5">Résumé</span></button>
         <button onClick={() => setActiveTab('members')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'members' ? 'text-[#1b4332]' : 'text-stone-400'}`}><Users size={22} /><span className="text-[10px] font-bold mt-1.5">Paysans</span></button>
