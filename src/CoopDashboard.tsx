@@ -77,7 +77,7 @@ interface Member {
 
 interface Order { id: string; produit: string; qte: string; date: string; cout: string; statut: string; }
 interface StockTransaction { id: string; type: 'entree' | 'sortie'; produit: string; qte: string; date: string; cout: string; acteur: string; }
-// Composant pour ajuster automatiquement la vue de la carte sur les parcelles
+
 const AutoFitBounds = ({ members }: { members: Member[] }) => {
   const map = useMap();
   
@@ -88,7 +88,6 @@ const AutoFitBounds = ({ members }: { members: Member[] }) => {
     let hasValidPoints = false;
     
     members.forEach(m => {
-      // Vérifier si le membre a un tracé de parcelle
       if (m.parcelle && m.parcelle.length > 0) {
         m.parcelle.forEach(p => {
           if (p && p.lat && p.lng) {
@@ -97,14 +96,12 @@ const AutoFitBounds = ({ members }: { members: Member[] }) => {
           }
         });
       } 
-      // Ou s'il a juste un point GPS simple
       else if (m.gps && m.gps.lat && m.gps.lng) {
         bounds.extend([m.gps.lat, m.gps.lng]);
         hasValidPoints = true;
       }
     });
 
-    // Si on a trouvé des points, on centre la carte dessus
     if (hasValidPoints) {
       map.fitBounds(bounds, { padding: [40, 40], maxZoom: 17 });
     }
@@ -112,7 +109,7 @@ const AutoFitBounds = ({ members }: { members: Member[] }) => {
 
   return null;
 };
-// Composant pour gérer les clics manuels sur la carte (sans forcer le recentrage)
+
 const MapController = ({ onMapClick }: { onMapClick: (p: Point) => void }) => {
   useMapEvents({
     click(e) {
@@ -137,7 +134,6 @@ const CoopDashboard: React.FC = () => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [stock, setStock] = useState<StockTransaction[]>([]); 
 
-  // --- ÉTATS DU WIZARD DE TRACÉ ---
   const [wizardStep, setWizardStep] = useState<0 | 1 | 2 | 3>(0); 
   const [parcelPoints, setParcelPoints] = useState<Point[]>([]);
   const [currentLocation, setCurrentLocation] = useState<Point | null>(null);
@@ -145,7 +141,6 @@ const CoopDashboard: React.FC = () => {
   const trackingWatchId = useRef<number | null>(null);
   
   const [mapRef, setMapRef] = useState<L.Map | null>(null);
-  // Référence pour savoir si on a déjà centré la caméra au démarrage
   const initialCenterDone = useRef<boolean>(false);
 
   const [newMember, setNewMember] = useState<Partial<Member>>({ nom: '', village: '', culture: '', surface: '', date: '', cout: '' });
@@ -174,7 +169,7 @@ const CoopDashboard: React.FC = () => {
         setOrders(oSnap.docs.map(d => ({ id: d.id, ...d.data() } as Order)));
         const sSnap = await getDocs(collection(db, "magasin"));
         setStock(sSnap.docs.map(d => ({ id: d.id, ...d.data() } as StockTransaction)));
-      } catch (error) { console.error("Erreur", error); }
+      } catch (error) { console.error("Erreur de récupération", error); }
     };
     if (isLoggedIn) fetchDonnees();
   }, [isLoggedIn]);
@@ -186,7 +181,6 @@ const CoopDashboard: React.FC = () => {
           const newPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
           setCurrentLocation(newPos);
 
-          // On centre la carte UNE SEULE FOIS quand on capte le GPS au lancement du wizard
           if (!initialCenterDone.current && mapRef) {
             mapRef.setView([newPos.lat, newPos.lng], 16, { animate: true });
             initialCenterDone.current = true;
@@ -215,7 +209,7 @@ const CoopDashboard: React.FC = () => {
   const startWizard = () => {
     setParcelPoints([]);
     setNewMember({ nom: '', village: '', culture: '', surface: '', date: new Date().toISOString().split('T')[0], cout: '5000' });
-    initialCenterDone.current = false; // On réinitialise le "premier centrage"
+    initialCenterDone.current = false;
     setWizardStep(1);
   };
 
@@ -232,7 +226,10 @@ const CoopDashboard: React.FC = () => {
       const center = turf.centerOfMass(polygon);
       setNewMember(prev => ({ ...prev, surface: areaInHa, parcelle: parcelPoints, gps: { lat: center.geometry.coordinates[1], lng: center.geometry.coordinates[0] } }));
       setWizardStep(2);
-    } catch (e) { alert("Erreur géométrique. Les lignes se croisent-elles ?"); }
+    } catch (error) { 
+      console.error(error);
+      alert("Erreur géométrique. Les lignes se croisent-elles ?"); 
+    }
   };
 
   const handleAuth = async (e: React.FormEvent) => {
@@ -240,7 +237,10 @@ const CoopDashboard: React.FC = () => {
     try {
       if (authMode === 'register') await createUserWithEmailAndPassword(auth, credentials.email, credentials.password);
       else await signInWithEmailAndPassword(auth, credentials.email, credentials.password);
-    } catch (error: any) { alert("Erreur : " + error.message); }
+    } catch (error) { 
+      const msg = error instanceof Error ? error.message : "Erreur inconnue";
+      alert("Erreur : " + msg); 
+    }
   };
 
   const addMemberFromWizard = async (e: React.FormEvent) => {
@@ -250,12 +250,47 @@ const CoopDashboard: React.FC = () => {
       setMembers([{ id: docRef.id, ...newMember, statut: "Actif" } as Member, ...members]);
       setWizardStep(0); setActiveTab('members');
       alert("Membre enregistré avec succès !");
-    } catch (err) { alert("Erreur."); }
+    } catch (err) { 
+      console.error(err);
+      alert("Erreur lors de l'enregistrement du membre."); 
+    }
   };
 
-  const addOrder = async (e: React.FormEvent) => { e.preventDefault(); try { const docRef = await addDoc(collection(db, "commandes"), { ...newOrder, statut: "En attente" }); setOrders([{ id: docRef.id, ...newOrder, statut: "En attente" } as Order, ...orders]); setShowForm(false); } catch (err) { alert("Erreur commande."); } };
-  const addStockTransaction = async (e: React.FormEvent) => { e.preventDefault(); try { const docRef = await addDoc(collection(db, "magasin"), newStock); setStock([{ id: docRef.id, ...newStock } as StockTransaction, ...stock]); setShowForm(false); } catch (err) { alert("Erreur magasin."); } };
-  const deleteDocGen = async <T extends { id: string }>(collectionName: string, id: string, setter: React.Dispatch<React.SetStateAction<T[]>>, state: T[]) => { if(window.confirm("Supprimer ?")) { try { await deleteDoc(doc(db, collectionName, id)); setter(state.filter(item => item.id !== id)); } catch (err) { alert("Erreur."); } } };
+  const addOrder = async (e: React.FormEvent) => { 
+    e.preventDefault(); 
+    try { 
+      const docRef = await addDoc(collection(db, "commandes"), { ...newOrder, statut: "En attente" }); 
+      setOrders([{ id: docRef.id, ...newOrder, statut: "En attente" } as Order, ...orders]); 
+      setShowForm(false); 
+    } catch (err) { 
+      console.error(err);
+      alert("Erreur lors de la commande."); 
+    } 
+  };
+  
+  const addStockTransaction = async (e: React.FormEvent) => { 
+    e.preventDefault(); 
+    try { 
+      const docRef = await addDoc(collection(db, "magasin"), newStock); 
+      setStock([{ id: docRef.id, ...newStock } as StockTransaction, ...stock]); 
+      setShowForm(false); 
+    } catch (err) { 
+      console.error(err);
+      alert("Erreur magasin."); 
+    } 
+  };
+  
+  const deleteDocGen = async <T extends { id: string }>(collectionName: string, id: string, setter: React.Dispatch<React.SetStateAction<T[]>>, state: T[]) => { 
+    if(window.confirm("Supprimer ?")) { 
+      try { 
+        await deleteDoc(doc(db, collectionName, id)); 
+        setter(state.filter(item => item.id !== id)); 
+      } catch (err) { 
+        console.error(err);
+        alert("Erreur de suppression."); 
+      } 
+    } 
+  };
 
   const exportToExcel = () => {
     let dataToExport;
@@ -317,7 +352,10 @@ const CoopDashboard: React.FC = () => {
       });
 
       docPDF.save(fileName);
-    } catch (err) { console.error(err); alert("Erreur PDF."); }
+    } catch (err) { 
+      console.error(err); 
+      alert("Erreur PDF."); 
+    }
   };
 
   if (authLoading) return <div className="min-h-screen bg-green-50 flex items-center justify-center"><p className="font-bold text-green-700">Chargement...</p></div>;
@@ -329,8 +367,8 @@ const CoopDashboard: React.FC = () => {
           <div className="flex justify-center mb-6"><div className="bg-green-100 p-4 rounded-full"><Sprout size={48} className="text-green-600" /></div></div>
           <h1 className="text-2xl font-bold text-center text-gray-800 mb-2">CAB NIAKARA</h1>
           <form onSubmit={handleAuth} className="space-y-4">
-            <div className="relative"><User className="absolute left-3 top-3 text-gray-400" size={20} /><input required type="email" placeholder="Adresse e-mail" className="w-full pl-10 p-3 bg-gray-50 rounded-xl border border-gray-200" value={credentials.email} onChange={e => setCredentials({...credentials, email: e.target.value})} /></div>
-            <div className="relative"><Lock className="absolute left-3 top-3 text-gray-400" size={20} /><input required type="password" placeholder="Mot de passe" className="w-full pl-10 p-3 bg-gray-50 rounded-xl border border-gray-200" value={credentials.password} onChange={e => setCredentials({...credentials, password: e.target.value})} /></div>
+            <div className="relative"><User className="absolute left-3 top-3 text-gray-400" size={20} /><input required type="email" aria-label="Adresse e-mail" placeholder="Adresse e-mail" className="w-full pl-10 p-3 bg-gray-50 rounded-xl border border-gray-200" value={credentials.email} onChange={e => setCredentials({...credentials, email: e.target.value})} /></div>
+            <div className="relative"><Lock className="absolute left-3 top-3 text-gray-400" size={20} /><input required type="password" aria-label="Mot de passe" placeholder="Mot de passe" className="w-full pl-10 p-3 bg-gray-50 rounded-xl border border-gray-200" value={credentials.password} onChange={e => setCredentials({...credentials, password: e.target.value})} /></div>
             <button type="submit" className="w-full bg-green-600 text-white py-3 rounded-xl font-bold">{authMode === 'register' ? "S'inscrire" : "Se Connecter"}</button>
           </form>
           <p className="text-center mt-6 text-sm"><button onClick={() => setAuthMode(authMode === 'register' ? 'login' : 'register')} className="text-green-600 font-bold">{authMode === 'register' ? "Déjà un compte ?" : "Inscrivez-vous"}</button></p>
@@ -345,13 +383,12 @@ const CoopDashboard: React.FC = () => {
       <div className="fixed inset-0 bg-white z-[200] flex flex-col">
         <div className="bg-green-700 text-white p-4 shadow-md flex justify-between items-center z-[210]">
           <div><h2 className="font-bold text-lg">Relevé de la parcelle</h2><p className="text-green-200 text-xs">{parcelPoints.length} point(s) enregistré(s)</p></div>
-          <button onClick={() => setWizardStep(0)} className="bg-green-800 p-2 rounded-full"><X size={20}/></button>
+          <button onClick={() => setWizardStep(0)} aria-label="Fermer la carte" className="bg-green-800 p-2 rounded-full"><X size={20}/></button>
         </div>
         <div className="flex-1 relative">
           <MapContainer ref={setMapRef} center={[9.5222, -6.4869]} zoom={12} style={{ height: '100%', width: '100%' }} zoomControl={false}>
             <TileLayer url="https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}" maxZoom={20} subdomains={['mt0','mt1','mt2','mt3']} />
             
-            {/* Nouveau contrôleur qui gère les clics manuels SANS forcer la caméra */}
             <MapController onMapClick={addManualPoint} />
             
             {currentLocation && <Marker position={[currentLocation.lat, currentLocation.lng]} icon={userLocationIcon} />}
@@ -360,18 +397,17 @@ const CoopDashboard: React.FC = () => {
             {parcelPoints.length >= 3 && <Polygon positions={parcelPoints.map(p => [p.lat, p.lng])} pathOptions={{ color: '#16a34a', fillColor: '#22c55e', fillOpacity: 0.3 }} />}
           </MapContainer>
           <div className="absolute top-4 left-4 right-4 z-[400] flex justify-between">
-            {/* Bouton pour se recentrer manuellement sur sa position GPS si on est perdu */}
-            <button onClick={() => { if(currentLocation && mapRef) mapRef.setView([currentLocation.lat, currentLocation.lng], 18, {animate: true}) }} className="bg-white p-3 rounded-full shadow-lg text-blue-600 flex items-center justify-center h-12 w-12"><Navigation size={24} /></button>
+            <button onClick={() => { if(currentLocation && mapRef) mapRef.setView([currentLocation.lat, currentLocation.lng], 18, {animate: true}) }} aria-label="Centrer sur ma position" className="bg-white p-3 rounded-full shadow-lg text-blue-600 flex items-center justify-center h-12 w-12"><Navigation size={24} /></button>
             {parcelPoints.length > 0 && <button onClick={undoLastPoint} className="bg-white px-4 py-2 rounded-full shadow-lg text-gray-700 font-bold flex gap-2 items-center h-12"><Undo size={20} /> <span className="text-sm">Annuler point</span></button>}
           </div>
         </div>
         <div className="bg-white rounded-t-3xl shadow-[0_-10px_20px_rgba(0,0,0,0.1)] z-[210] p-4 pb-8">
           <div className="flex gap-2 mb-4">
-            <button onClick={() => setIsTracking(!isTracking)} className={`flex-1 flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-colors ${isTracking ? 'bg-red-50 border-red-500 text-red-600' : 'bg-gray-50 border-gray-200 text-gray-700'}`}>
+            <button onClick={() => setIsTracking(!isTracking)} aria-label="Démarrer ou arrêter l'arpentage" className={`flex-1 flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-colors ${isTracking ? 'bg-red-50 border-red-500 text-red-600' : 'bg-gray-50 border-gray-200 text-gray-700'}`}>
               {isTracking ? <Square size={32} className="mb-2" /> : <Play size={32} className="mb-2 text-green-600" />}
               <span className="font-bold text-sm text-center">{isTracking ? 'Stop Arpentage' : 'Démarrer (Marche)'}</span>
             </button>
-            <button onClick={() => { if(currentLocation) addManualPoint(currentLocation) }} disabled={isTracking || !currentLocation} className="flex-1 flex flex-col items-center justify-center p-4 rounded-2xl bg-gray-50 border-2 border-gray-200 text-gray-700 disabled:opacity-50 hover:bg-gray-100">
+            <button onClick={() => { if(currentLocation) addManualPoint(currentLocation) }} disabled={isTracking || !currentLocation} aria-label="Placer un point manuel" className="flex-1 flex flex-col items-center justify-center p-4 rounded-2xl bg-gray-50 border-2 border-gray-200 text-gray-700 disabled:opacity-50 hover:bg-gray-100">
               <MapPin size={32} className="mb-2 text-blue-600" />
               <span className="font-bold text-sm text-center">Placer un point ici</span>
             </button>
@@ -401,13 +437,13 @@ const CoopDashboard: React.FC = () => {
   if (wizardStep === 3) {
     return (
       <div className="fixed inset-0 bg-gray-50 z-[200] overflow-y-auto">
-        <div className="bg-green-700 text-white p-4 shadow-md flex justify-between items-center sticky top-0"><h2 className="font-bold text-lg">Informations du Paysan</h2><button onClick={() => setWizardStep(0)} className="text-green-200"><X size={24}/></button></div>
+        <div className="bg-green-700 text-white p-4 shadow-md flex justify-between items-center sticky top-0"><h2 className="font-bold text-lg">Informations du Paysan</h2><button aria-label="Fermer" onClick={() => setWizardStep(0)} className="text-green-200"><X size={24}/></button></div>
         <div className="p-4 max-w-md mx-auto mt-4">
           <form onSubmit={addMemberFromWizard} className="space-y-4 bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
             <div className="bg-green-50 p-4 rounded-xl border border-green-200 flex justify-between items-center"><span className="font-bold text-green-800">Superficie tracée :</span><span className="text-xl font-black text-green-700">{newMember.surface} ha</span></div>
-            <div className="space-y-1"><label className="text-sm font-bold text-gray-600">Nom Complet</label><input required className="w-full p-4 bg-gray-50 rounded-xl border border-gray-200 text-lg" value={newMember.nom} onChange={e => setNewMember({...newMember, nom: e.target.value})} /></div>
-            <div className="space-y-1"><label className="text-sm font-bold text-gray-600">Village / Campement</label><input required className="w-full p-4 bg-gray-50 rounded-xl border border-gray-200 text-lg" value={newMember.village} onChange={e => setNewMember({...newMember, village: e.target.value})} /></div>
-            <div className="space-y-1"><label className="text-sm font-bold text-gray-600">Culture principale</label><input required className="w-full p-4 bg-gray-50 rounded-xl border border-gray-200 text-lg" value={newMember.culture} onChange={e => setNewMember({...newMember, culture: e.target.value})} /></div>
+            <div className="space-y-1"><label htmlFor="nomComplet" className="text-sm font-bold text-gray-600">Nom Complet</label><input id="nomComplet" required className="w-full p-4 bg-gray-50 rounded-xl border border-gray-200 text-lg" value={newMember.nom} onChange={e => setNewMember({...newMember, nom: e.target.value})} /></div>
+            <div className="space-y-1"><label htmlFor="villageCampement" className="text-sm font-bold text-gray-600">Village / Campement</label><input id="villageCampement" required className="w-full p-4 bg-gray-50 rounded-xl border border-gray-200 text-lg" value={newMember.village} onChange={e => setNewMember({...newMember, village: e.target.value})} /></div>
+            <div className="space-y-1"><label htmlFor="culturePrincipale" className="text-sm font-bold text-gray-600">Culture principale</label><input id="culturePrincipale" required className="w-full p-4 bg-gray-50 rounded-xl border border-gray-200 text-lg" value={newMember.culture} onChange={e => setNewMember({...newMember, culture: e.target.value})} /></div>
             <button type="submit" className="w-full h-14 bg-green-600 text-white rounded-xl font-bold text-lg shadow-lg mt-8">Enregistrer dans la base</button>
           </form>
         </div>
@@ -424,7 +460,7 @@ const CoopDashboard: React.FC = () => {
       <div className="bg-green-700 text-white shadow-lg">
         <div className="max-w-7xl mx-auto px-4 py-6 flex justify-between items-center">
           <div><p className="text-green-200 text-xs md:text-sm font-medium">Coopérative Agricole</p><h1 className="text-xl md:text-3xl font-bold">CAB - NIAKARA</h1></div>
-          <button onClick={() => signOut(auth)} className="bg-red-500 p-2 rounded-lg text-sm font-bold flex items-center gap-2"><LogOut size={16} /></button>
+          <button onClick={() => signOut(auth)} aria-label="Se déconnecter" className="bg-red-500 p-2 rounded-lg text-sm font-bold flex items-center gap-2"><LogOut size={16} /></button>
         </div>
       </div>
 
@@ -456,7 +492,7 @@ const CoopDashboard: React.FC = () => {
                   </h2>
                   <div className="relative flex-1 w-full md:max-w-xs">
                     <Search className="absolute left-3 top-3 text-gray-400" size={18} />
-                    <input type="text" placeholder="Rechercher..." className="w-full pl-10 pr-4 py-2 bg-gray-50 rounded-lg border border-gray-200" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                    <input type="text" aria-label="Rechercher" placeholder="Rechercher..." className="w-full pl-10 pr-4 py-2 bg-gray-50 rounded-lg border border-gray-200" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
                   </div>
                   
                   <div className="flex flex-wrap gap-2">
@@ -482,7 +518,7 @@ const CoopDashboard: React.FC = () => {
                             <p className="text-xs text-gray-500">{m.village} • {m.culture} • <strong className="text-green-700">{m.surface} ha</strong></p>
                           </div>
                         </div>
-                        <button onClick={() => deleteDocGen("membres", m.id, setMembers, members)} className="text-red-400 hover:text-red-600"><Trash2 size={20} /></button>
+                        <button onClick={() => deleteDocGen("membres", m.id, setMembers, members)} aria-label="Supprimer le membre" className="text-red-400 hover:text-red-600"><Trash2 size={20} /></button>
                       </div>
                     ))}
                   </div>
@@ -502,7 +538,7 @@ const CoopDashboard: React.FC = () => {
                             <span className="text-xs font-medium text-purple-700 bg-purple-100 px-2 py-1 rounded">Date: {s.date} | Val: {s.cout} FCFA</span>
                           </div>
                         </div>
-                        <button onClick={() => deleteDocGen("magasin", s.id, setStock, stock)} className="text-red-400 hover:text-red-600"><Trash2 size={20} /></button>
+                        <button onClick={() => deleteDocGen("magasin", s.id, setStock, stock)} aria-label="Supprimer du stock" className="text-red-400 hover:text-red-600"><Trash2 size={20} /></button>
                       </div>
                     ))}
                   </div>
@@ -517,7 +553,7 @@ const CoopDashboard: React.FC = () => {
                           <p className="text-xs font-medium text-blue-700 mt-1">Date: {o.date} | Coût: {o.cout} FCFA</p>
                           <div className="flex items-center gap-2 text-xs font-bold text-green-600 mt-1"><Clock size={14} /> {o.statut}</div>
                         </div>
-                        <button onClick={() => deleteDocGen("commandes", o.id, setOrders, orders)} className="text-red-400 hover:text-red-600"><Trash2 size={20} /></button>
+                        <button onClick={() => deleteDocGen("commandes", o.id, setOrders, orders)} aria-label="Supprimer la commande" className="text-red-400 hover:text-red-600"><Trash2 size={20} /></button>
                       </div>
                     ))}
                   </div>
@@ -535,7 +571,6 @@ const CoopDashboard: React.FC = () => {
       <MapContainer center={[9.5222, -6.4869]} zoom={10} style={{ height: '100%', width: '100%' }}>
         <TileLayer url="https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}" maxZoom={20} subdomains={['mt0','mt1','mt2','mt3']} />
         
-        {/* Ajout du recentrage automatique */}
         <AutoFitBounds members={members} />
 
     {members.map((m) => (
@@ -545,12 +580,9 @@ const CoopDashboard: React.FC = () => {
                 positions={m.parcelle.map(p => [p.lat, p.lng])} 
                 pathOptions={{ color: '#16a34a', fillColor: '#22c55e', fillOpacity: 0.6 }}
               >
-                {/* L'étiquette permanente visible sans cliquer */}
                 <Tooltip permanent direction="center" className="bg-white/90 border border-green-600 rounded px-2 py-1 shadow-sm text-xs font-bold text-green-800 text-center">
                   {m.nom} <br/> {m.surface} ha
                 </Tooltip>
-
-                {/* Le Popup détaillé qui s'ouvre si on clique quand même dessus */}
                 <Popup>
                   <div className="text-sm min-w-[150px]">
                     <strong className="text-lg text-green-700">{m.nom}</strong>
@@ -565,11 +597,9 @@ const CoopDashboard: React.FC = () => {
             ) : (
               m.gps && (
                 <Marker position={[m.gps.lat, m.gps.lng]} icon={userLocationIcon}>
-                  {/* Étiquette permanente pour les simples points GPS */}
                   <Tooltip permanent direction="top" offset={[0, -20]} className="bg-white/90 border border-blue-600 rounded px-2 py-1 shadow-sm text-xs font-bold text-blue-800 text-center">
                     {m.nom}
                   </Tooltip>
-
                   <Popup>
                     <div className="text-sm min-w-[150px]">
                       <strong className="text-lg text-blue-700">{m.nom}</strong>
@@ -607,30 +637,30 @@ const CoopDashboard: React.FC = () => {
           <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl my-8">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-bold italic text-gray-800">{activeTab === 'orders' ? 'Nouvelle Commande' : 'Opération Magasin'}</h2>
-              <button onClick={() => setShowForm(false)} className="text-gray-400 bg-gray-100 p-2 rounded-full"><X size={20}/></button>
+              <button onClick={() => setShowForm(false)} aria-label="Fermer le formulaire" className="text-gray-400 bg-gray-100 p-2 rounded-full"><X size={20}/></button>
             </div>
 
             {activeTab === 'orders' && (
               <form onSubmit={addOrder} className="space-y-4">
-                <input required type="date" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newOrder.date} onChange={e => setNewOrder({...newOrder, date: e.target.value})} />
-                <input required placeholder="Produit demandé" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newOrder.produit} onChange={e => setNewOrder({...newOrder, produit: e.target.value})} />
-                <input required placeholder="Quantité" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newOrder.qte} onChange={e => setNewOrder({...newOrder, qte: e.target.value})} />
-                <input required type="number" placeholder="Coût estimé (FCFA)" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newOrder.cout} onChange={e => setNewOrder({...newOrder, cout: e.target.value})} />
+                <input required type="date" aria-label="Date" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newOrder.date} onChange={e => setNewOrder({...newOrder, date: e.target.value})} />
+                <input required placeholder="Produit demandé" aria-label="Produit demandé" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newOrder.produit} onChange={e => setNewOrder({...newOrder, produit: e.target.value})} />
+                <input required placeholder="Quantité" aria-label="Quantité" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newOrder.qte} onChange={e => setNewOrder({...newOrder, qte: e.target.value})} />
+                <input required type="number" placeholder="Coût estimé (FCFA)" aria-label="Coût estimé (FCFA)" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newOrder.cout} onChange={e => setNewOrder({...newOrder, cout: e.target.value})} />
                 <button type="submit" className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold">Valider Commande</button>
               </form>
             )}
 
             {activeTab === 'stock' && (
               <form onSubmit={addStockTransaction} className="space-y-4">
-                <select required className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200 font-bold" value={newStock.type} onChange={e => setNewStock({...newStock, type: e.target.value as 'entree'|'sortie'})}>
+                <select required aria-label="Type d'opération" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200 font-bold" value={newStock.type} onChange={e => setNewStock({...newStock, type: e.target.value as 'entree'|'sortie'})}>
                   <option value="entree">Entrée en stock</option>
                   <option value="sortie">Sortie de stock</option>
                 </select>
-                <input required type="date" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.date} onChange={e => setNewStock({...newStock, date: e.target.value})} />
-                <input required placeholder="Nom du Produit" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.produit} onChange={e => setNewStock({...newStock, produit: e.target.value})} />
-                <input required placeholder="Quantité (ex: 50 sacs, 10 L)" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.qte} onChange={e => setNewStock({...newStock, qte: e.target.value})} />
-                <input required type="number" placeholder="Valeur Total (FCFA)" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.cout} onChange={e => setNewStock({...newStock, cout: e.target.value})} />
-                <input required placeholder={newStock.type === 'entree' ? "Fournisseur" : "Bénéficiaire"} className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.acteur} onChange={e => setNewStock({...newStock, acteur: e.target.value})} />
+                <input required type="date" aria-label="Date" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.date} onChange={e => setNewStock({...newStock, date: e.target.value})} />
+                <input required placeholder="Nom du Produit" aria-label="Nom du Produit" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.produit} onChange={e => setNewStock({...newStock, produit: e.target.value})} />
+                <input required placeholder="Quantité (ex: 50 sacs, 10 L)" aria-label="Quantité" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.qte} onChange={e => setNewStock({...newStock, qte: e.target.value})} />
+                <input required type="number" placeholder="Valeur Total (FCFA)" aria-label="Valeur Total (FCFA)" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.cout} onChange={e => setNewStock({...newStock, cout: e.target.value})} />
+                <input required placeholder={newStock.type === 'entree' ? "Fournisseur" : "Bénéficiaire"} aria-label={newStock.type === 'entree' ? "Fournisseur" : "Bénéficiaire"} className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.acteur} onChange={e => setNewStock({...newStock, acteur: e.target.value})} />
                 <button type="submit" className="w-full bg-purple-600 text-white py-4 rounded-xl font-bold">Confirmer l'opération</button>
               </form>
             )}
@@ -640,6 +670,7 @@ const CoopDashboard: React.FC = () => {
 
       <button 
         onClick={startWizard}
+        aria-label="Nouvelle Action"
         className="fixed bottom-20 right-4 md:bottom-8 md:right-8 bg-green-600 text-white w-16 h-16 rounded-full shadow-[0_10px_25px_rgba(22,163,74,0.5)] flex items-center justify-center hover:bg-green-700 transition-transform active:scale-95 z-[100]"
       >
         <MapPin size={28} />
