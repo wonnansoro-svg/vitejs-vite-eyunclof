@@ -4,15 +4,16 @@ import {
   Clock, Plus, X, FileSpreadsheet, FileText, 
   Map as MapIcon, CloudRain, Sun, Trash2, LogOut, Lock, User,
   Package, ArrowDownToLine, ArrowUpFromLine, Check, 
-  Play, Square, Undo, Navigation, MapPin
+  Play, Square, Undo, Navigation, MapPin,
 } from 'lucide-react';
+
 
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable'; 
 
 import 'leaflet/dist/leaflet.css';
-import { MapContainer, TileLayer, Marker, Popup, Polygon, Polyline, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polygon, Polyline, useMapEvents, useMap  } from 'react-leaflet';
 import L from 'leaflet';
 import * as turf from '@turf/turf';
 
@@ -76,7 +77,41 @@ interface Member {
 
 interface Order { id: string; produit: string; qte: string; date: string; cout: string; statut: string; }
 interface StockTransaction { id: string; type: 'entree' | 'sortie'; produit: string; qte: string; date: string; cout: string; acteur: string; }
+// Composant pour ajuster automatiquement la vue de la carte sur les parcelles
+const AutoFitBounds = ({ members }: { members: Member[] }) => {
+  const map = useMap();
+  
+  useEffect(() => {
+    if (!members || members.length === 0) return;
+    
+    const bounds = new L.LatLngBounds([]);
+    let hasValidPoints = false;
+    
+    members.forEach(m => {
+      // Vérifier si le membre a un tracé de parcelle
+      if (m.parcelle && m.parcelle.length > 0) {
+        m.parcelle.forEach(p => {
+          if (p && p.lat && p.lng) {
+            bounds.extend([p.lat, p.lng]);
+            hasValidPoints = true;
+          }
+        });
+      } 
+      // Ou s'il a juste un point GPS simple
+      else if (m.gps && m.gps.lat && m.gps.lng) {
+        bounds.extend([m.gps.lat, m.gps.lng]);
+        hasValidPoints = true;
+      }
+    });
 
+    // Si on a trouvé des points, on centre la carte dessus
+    if (hasValidPoints) {
+      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 17 });
+    }
+  }, [members, map]);
+
+  return null;
+};
 // Composant pour gérer les clics manuels sur la carte (sans forcer le recentrage)
 const MapController = ({ onMapClick }: { onMapClick: (p: Point) => void }) => {
   useMapEvents({
@@ -492,29 +527,60 @@ const CoopDashboard: React.FC = () => {
             )}
 
             {activeTab === 'map' && (
-              <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 h-[600px] flex flex-col">
-                <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-gray-800"><MapIcon className="text-green-600" /> Carte des Parcelles</h2>
-                <div className="flex-1 rounded-xl overflow-hidden border border-gray-200 z-0">
-                  <MapContainer center={[9.5222, -6.4869]} zoom={10} style={{ height: '100%', width: '100%' }}>
-                    <TileLayer url="https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}" maxZoom={20} subdomains={['mt0','mt1','mt2','mt3']} />
-                    {members.map((m) => (
-                      <React.Fragment key={m.id}>
-                        {m.parcelle && m.parcelle.length > 0 ? (
-                          <Polygon positions={m.parcelle.map(p => [p.lat, p.lng])} pathOptions={{ color: '#16a34a', fillColor: '#22c55e', fillOpacity: 0.6 }}>
-                            <Popup><strong>{m.nom}</strong><br/>{m.village}<br/>{m.culture} - {m.surface} ha</Popup>
-                          </Polygon>
-                        ) : (
-                          m.gps && <Marker position={[m.gps.lat, m.gps.lng]}><Popup><strong>{m.nom}</strong> - Point simple</Popup></Marker>
-                        )}
-                      </React.Fragment>
-                    ))}
-                  </MapContainer>
-                </div>
-              </div>
+  <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 h-[600px] flex flex-col">
+    <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-gray-800">
+      <MapIcon className="text-green-600" /> Carte des Parcelles
+    </h2>
+    <div className="flex-1 rounded-xl overflow-hidden border border-gray-200 z-0 relative">
+      <MapContainer center={[9.5222, -6.4869]} zoom={10} style={{ height: '100%', width: '100%' }}>
+        <TileLayer url="https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}" maxZoom={20} subdomains={['mt0','mt1','mt2','mt3']} />
+        
+        {/* Ajout du recentrage automatique */}
+        <AutoFitBounds members={members} />
+
+        {members.map((m) => (
+          <React.Fragment key={m.id}>
+            {m.parcelle && m.parcelle.length > 0 ? (
+              <Polygon 
+                positions={m.parcelle.map(p => [p.lat, p.lng])} 
+                pathOptions={{ color: '#16a34a', fillColor: '#22c55e', fillOpacity: 0.6 }}
+              >
+                {/* Popup enrichi avec les infos de l'agriculteur */}
+                <Popup>
+                  <div className="text-sm min-w-[150px]">
+                    <strong className="text-lg text-green-700">{m.nom}</strong>
+                    <div className="h-px bg-gray-200 my-2"></div>
+                    <p className="mb-1"><strong>Village :</strong> {m.village}</p>
+                    <p className="mb-1"><strong>Culture :</strong> {m.culture}</p>
+                    <p className="mb-1"><strong>Surface :</strong> <span className="text-green-600 font-bold">{m.surface} ha</span></p>
+                    <p className="mb-1"><strong>Statut :</strong> {m.statut}</p>
+                  </div>
+                </Popup>
+              </Polygon>
+            ) : (
+              m.gps && (
+                <Marker position={[m.gps.lat, m.gps.lng]} icon={userLocationIcon}>
+                  <Popup>
+                    <div className="text-sm min-w-[150px]">
+                      <strong className="text-lg text-blue-700">{m.nom}</strong>
+                      <div className="h-px bg-gray-200 my-2"></div>
+                      <p className="mb-1"><strong>Village :</strong> {m.village}</p>
+                      <p className="mb-1"><strong>Culture :</strong> {m.culture}</p>
+                      <p className="text-xs text-gray-500 italic mt-2">(Point GPS simple - Pas de tracé)</p>
+                    </div>
+                  </Popup>
+                </Marker>
+              )
             )}
+          </React.Fragment>
+        ))}
+      </MapContainer>
+    </div>
+  </div>
+)}
           </div>
 
-          <div className="hidden lg:block space-y-6">
+          <div className="space-y-6 mt-6 lg:mt-0">
             <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-2xl border border-blue-200">
               <h3 className="font-bold text-blue-800 mb-4 flex items-center gap-2"><CloudRain className="text-blue-600" /> Météo - hambol</h3>
               {weather ? (
