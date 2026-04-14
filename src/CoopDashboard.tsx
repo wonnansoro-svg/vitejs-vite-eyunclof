@@ -64,8 +64,8 @@ interface Point { lat: number; lng: number }
 
 interface CropConfig {
   nom: string;
-  rendementHa: number; // Rendement attendu en Tonnes par Hectare
-  prixTonne: number;   // Prix de vente estimé en FCFA par Tonne
+  rendementHa: number;
+  prixTonne: number;   
 }
 
 interface CoopProfile {
@@ -139,7 +139,6 @@ const CoopDashboard: React.FC = () => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [stock, setStock] = useState<StockTransaction[]>([]); 
 
-  // --- WIZARD ÉTATS ---
   const [wizardStep, setWizardStep] = useState<0 | 1 | 2 | 3>(0); 
   const [parcelPoints, setParcelPoints] = useState<Point[]>([]);
   const [currentLocation, setCurrentLocation] = useState<Point | null>(null);
@@ -153,7 +152,6 @@ const CoopDashboard: React.FC = () => {
   const [newStock, setNewStock] = useState<Partial<StockTransaction>>({ type: 'entree', produit: '', qte: '', date: '', cout: '', acteur: '' });
   const [newCrop, setNewCrop] = useState<CropConfig>({ nom: '', rendementHa: 0, prixTonne: 0 });
 
-  // 1. GESTION AUTHENTIFICATION
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setIsLoggedIn(!!user);
@@ -162,7 +160,6 @@ const CoopDashboard: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // 2. CHARGEMENT DONNÉES ET MÉTÉO
   useEffect(() => {
     if (isLoggedIn && auth.currentUser) {
       const fetchData = async () => {
@@ -195,7 +192,6 @@ const CoopDashboard: React.FC = () => {
     }
   }, [isLoggedIn]);
 
-  // --- CALCULS POUR LES PROJECTIONS FINANCIÈRES ---
   const calculateProjections = () => {
     if (!coopProfile) return { totalRendement: 0, totalRevenu: 0 };
     let totalRendement = 0;
@@ -214,7 +210,6 @@ const CoopDashboard: React.FC = () => {
 
   const projections = calculateProjections();
 
-  // --- ACTIONS ---
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -282,7 +277,6 @@ const CoopDashboard: React.FC = () => {
     }
   };
 
-  // --- LOGIQUE DU WIZARD ---
   useEffect(() => {
     if (wizardStep === 1) {
       const id = navigator.geolocation.watchPosition(
@@ -360,7 +354,72 @@ const CoopDashboard: React.FC = () => {
   const addStockTransaction = async (e: React.FormEvent) => { e.preventDefault(); try { const docRef = await addDoc(collection(db, "magasin"), newStock); setStock([{ id: docRef.id, ...newStock } as StockTransaction, ...stock]); setShowForm(false); } catch (err) { console.error(err); alert("Erreur magasin."); } };
   const deleteDocGen = async <T extends { id: string }>(collectionName: string, id: string, setter: React.Dispatch<React.SetStateAction<T[]>>, state: T[]) => { if(window.confirm("Supprimer ?")) { try { await deleteDoc(doc(db, collectionName, id)); setter(state.filter(item => item.id !== id)); } catch (err) { console.error(err); alert("Erreur."); } } };
 
-  // --- RENDUS ---
+  const exportToExcel = () => {
+    let dataToExport;
+    let fileName = 'Export.xlsx';
+
+    if (activeTab === 'members') {
+      dataToExport = members.map(m => ({ Nom: m.nom, Village: m.village, Culture: m.culture, Surface: `${m.surface} ha`, Date: m.date, Frais: `${m.cout} FCFA`, Statut: m.statut }));
+      fileName = 'Liste_Membres_CAB.xlsx';
+    } else if (activeTab === 'orders') {
+      dataToExport = orders.map(o => ({ Produit: o.produit, Quantite: o.qte, Date: o.date, Cout: `${o.cout} FCFA`, Statut: o.statut }));
+      fileName = 'Liste_Commandes_CAB.xlsx';
+    } else {
+      dataToExport = stock.map(s => ({ Type: s.type === 'entree' ? 'Entrée' : 'Sortie', Produit: s.produit, Quantite: s.qte, Date: s.date, Valeur: `${s.cout} FCFA`, Acteur: s.acteur }));
+      fileName = 'Historique_Magasin_CAB.xlsx';
+    }
+    
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Données");
+    XLSX.writeFile(workbook, fileName);
+  };
+
+  const exportToPDF = () => {
+    try {
+      const docPDF = new jsPDF();
+      let title = '';
+      let tableHeaders: string[][] = [];
+      let tableData: string[][] = [];
+      let fileName = 'Rapport.pdf';
+
+      if (activeTab === 'members') {
+        title = 'ANNUAIRE DES MEMBRES - CAB';
+        fileName = 'Rapport_Membres.pdf';
+        tableHeaders = [["Nom", "Village", "Culture", "Date", "Frais", "Statut"]];
+        tableData = members.map(m => [m.nom, m.village, m.culture, m.date, `${m.cout} FCFA`, m.statut]);
+      } else if (activeTab === 'orders') {
+        title = 'SUIVI DES COMMANDES - CAB';
+        fileName = 'Rapport_Commandes.pdf';
+        tableHeaders = [["Produit", "Quantité", "Date", "Coût", "Statut"]];
+        tableData = orders.map(o => [o.produit || "", o.qte || "", o.date || "", `${o.cout} FCFA`, o.statut || ""]);
+      } else {
+        title = 'HISTORIQUE DU MAGASIN (STOCKS) - CAB';
+        fileName = 'Rapport_Magasin.pdf';
+        tableHeaders = [["Opération", "Produit", "Quantité", "Date", "Valeur", "Tiers"]];
+        tableData = stock.map(s => [s.type === 'entree' ? 'Entrée' : 'Sortie', s.produit, s.qte, s.date, `${s.cout} FCFA`, s.acteur]);
+      }
+
+      docPDF.setFontSize(16);
+      docPDF.text(title, 14, 15);
+      docPDF.setFontSize(10);
+      docPDF.text(coopProfile?.nom || "Coopérative Agricole", 14, 22);
+      
+      autoTable(docPDF, {
+        head: tableHeaders,
+        body: tableData,
+        startY: 30,
+        theme: 'grid',
+        headStyles: { fillColor: [22, 163, 74] } 
+      });
+
+      docPDF.save(fileName);
+    } catch (err) { 
+      console.error(err); 
+      alert("Erreur PDF."); 
+    }
+  };
+
   if (authLoading) return <div className="min-h-screen bg-green-50 flex items-center justify-center"><p className="font-bold text-green-700">Chargement...</p></div>;
   
   if (!isLoggedIn) {
@@ -395,7 +454,6 @@ const CoopDashboard: React.FC = () => {
     );
   }
 
-  // --- WIZARDS RENDUS (1, 2, et 3) ---
   if (wizardStep === 1) {
     return (
         <div className="fixed inset-0 bg-white z-[200] flex flex-col">
@@ -478,6 +536,8 @@ const CoopDashboard: React.FC = () => {
   }
 
   const filteredMembers = members.filter(m => m.nom.toLowerCase().includes(searchTerm.toLowerCase()));
+  const filteredOrders = orders.filter(o => o.produit.toLowerCase().includes(searchTerm.toLowerCase()));
+  const filteredStock = stock.filter(s => s.produit.toLowerCase().includes(searchTerm.toLowerCase()));
   
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
@@ -495,6 +555,8 @@ const CoopDashboard: React.FC = () => {
         <div className="hidden md:flex bg-white rounded-xl shadow-sm mb-6 p-2 border border-gray-100 overflow-x-auto gap-2">
           <button onClick={() => setActiveTab('overview')} className={`flex-1 py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === 'overview' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-50'}`}><TrendingUp size={18}/> Général</button>
           <button onClick={() => setActiveTab('members')} className={`flex-1 py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === 'members' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-50'}`}><Users size={18}/> Paysans</button>
+          <button onClick={() => setActiveTab('stock')} className={`flex-1 py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === 'stock' ? 'bg-purple-100 text-purple-700' : 'text-gray-500 hover:bg-gray-50'}`}><Package size={18}/> Magasin</button>
+          <button onClick={() => setActiveTab('orders')} className={`flex-1 py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === 'orders' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-50'}`}><ShoppingCart size={18}/> Commandes</button>
           <button onClick={() => setActiveTab('map')} className={`flex-1 py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === 'map' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-50'}`}><MapIcon size={18}/> Carte</button>
           <button onClick={() => setActiveTab('settings')} className={`flex-1 py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === 'settings' ? 'bg-gray-200 text-gray-800' : 'text-gray-500 hover:bg-gray-50'}`}><Settings size={18}/> Configuration</button>
         </div>
@@ -528,29 +590,80 @@ const CoopDashboard: React.FC = () => {
               </div>
             )}
 
-            {activeTab === 'members' && (
+            {(activeTab === 'members' || activeTab === 'orders' || activeTab === 'stock') && (
               <div className="bg-white rounded-2xl p-4 md:p-6 shadow-sm border border-gray-100">
-                <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-xl font-bold text-gray-800">Annuaire des Paysans</h2>
-                  <div className="relative w-full max-w-xs ml-4">
+                <div className="flex flex-col md:flex-row justify-between md:items-center mb-6 gap-4">
+                  <h2 className="text-xl font-bold text-gray-800">
+                    {activeTab === 'members' ? 'Annuaire des Paysans' : activeTab === 'orders' ? 'Suivi des Commandes' : 'Gestion du Magasin'}
+                  </h2>
+                  <div className="relative flex-1 w-full md:max-w-xs">
                     <Search className="absolute left-3 top-3 text-gray-400" size={18} />
-                    <input type="text" aria-label="Rechercher un paysan" placeholder="Rechercher..." className="w-full pl-10 pr-4 py-2 bg-gray-50 rounded-lg border border-gray-200" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                    <input type="text" aria-label="Rechercher" placeholder="Rechercher..." className="w-full pl-10 pr-4 py-2 bg-gray-50 rounded-lg border border-gray-200" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                  </div>
+                  
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={exportToExcel} className="bg-green-50 text-green-700 border border-green-200 px-3 py-2 rounded-lg text-sm font-bold hover:bg-green-100 flex items-center gap-2"><FileSpreadsheet size={16} /> Excel</button>
+                    <button onClick={exportToPDF} className="bg-red-50 text-red-700 border border-red-200 px-3 py-2 rounded-lg text-sm font-bold hover:bg-red-100 flex items-center gap-2"><FileText size={16} /> PDF</button>
+                    
+                    {(activeTab === 'orders' || activeTab === 'stock') && (
+                       <button onClick={() => setShowForm(true)} className={`${activeTab === 'stock' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-green-600 hover:bg-green-700'} text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2 font-bold ml-2`}>
+                         <Plus size={18} /> Nouveau
+                       </button>
+                    )}
                   </div>
                 </div>
-                <div className="grid gap-4">
-                  {filteredMembers.map(m => (
-                    <div key={m.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-100">
-                      <div className="flex gap-4 items-center">
-                        <div className="w-12 h-12 bg-green-200 rounded-full flex items-center justify-center font-bold text-green-800 shrink-0">{m.nom[0]}</div>
-                        <div>
-                          <p className="font-bold text-gray-800 flex items-center gap-2">{m.nom} {m.parcelle && <MapIcon size={14} className="text-green-600" />}</p>
-                          <p className="text-xs text-gray-500">{m.village} • {m.culture} • <strong className="text-green-700">{m.surface} ha</strong></p>
+
+                {activeTab === 'members' && (
+                  <div className="grid gap-4">
+                    {filteredMembers.map(m => (
+                      <div key={m.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-100">
+                        <div className="flex gap-4 items-center">
+                          <div className="w-12 h-12 bg-green-200 rounded-full flex items-center justify-center font-bold text-green-800 shrink-0">{m.nom[0]}</div>
+                          <div>
+                            <p className="font-bold text-gray-800 flex items-center gap-2">{m.nom} {m.parcelle && <MapIcon size={14} className="text-green-600" />}</p>
+                            <p className="text-xs text-gray-500">{m.village} • {m.culture} • <strong className="text-green-700">{m.surface} ha</strong></p>
+                          </div>
                         </div>
+                        <button aria-label="Supprimer ce paysan" onClick={() => deleteDocGen("membres", m.id, setMembers, members)} className="text-red-400 hover:text-red-600"><Trash2 size={20} /></button>
                       </div>
-                      <button aria-label="Supprimer ce paysan" onClick={() => deleteDocGen("membres", m.id, setMembers, members)} className="text-red-400 hover:text-red-600"><Trash2 size={20} /></button>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
+
+                {activeTab === 'stock' && (
+                  <div className="grid gap-4">
+                    {filteredStock.map(s => (
+                      <div key={s.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-100 gap-4">
+                        <div className="flex items-start gap-3">
+                          <div className={`p-2 rounded-full mt-1 ${s.type === 'entree' ? 'bg-green-100 text-green-600' : 'bg-orange-100 text-orange-600'}`}>
+                            {s.type === 'entree' ? <ArrowDownToLine size={20} /> : <ArrowUpFromLine size={20} />}
+                          </div>
+                          <div>
+                            <p className="font-bold text-gray-800">{s.produit} <span className="text-sm font-normal">({s.qte})</span></p>
+                            <p className="text-xs text-gray-500 mb-1">{s.type === 'entree' ? 'Fournisseur :' : 'Bénéficiaire :'} <span className="font-bold text-gray-700">{s.acteur}</span></p>
+                            <span className="text-xs font-medium text-purple-700 bg-purple-100 px-2 py-1 rounded">Date: {s.date} | Val: {s.cout} FCFA</span>
+                          </div>
+                        </div>
+                        <button onClick={() => deleteDocGen("magasin", s.id, setStock, stock)} aria-label="Supprimer du stock" className="text-red-400 hover:text-red-600"><Trash2 size={20} /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {activeTab === 'orders' && (
+                  <div className="grid gap-4">
+                    {filteredOrders.map(o => (
+                      <div key={o.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-100 gap-4">
+                        <div>
+                          <p className="font-bold text-gray-800">{o.produit} <span className="text-sm font-normal text-gray-500">({o.qte})</span></p>
+                          <p className="text-xs font-medium text-blue-700 mt-1">Date: {o.date} | Coût: {o.cout} FCFA</p>
+                          <div className="flex items-center gap-2 text-xs font-bold text-green-600 mt-1"><Clock size={14} /> {o.statut}</div>
+                        </div>
+                        <button onClick={() => deleteDocGen("commandes", o.id, setOrders, orders)} aria-label="Supprimer la commande" className="text-red-400 hover:text-red-600"><Trash2 size={20} /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -636,11 +749,49 @@ const CoopDashboard: React.FC = () => {
         </div>
       </div>
 
+      {showForm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[100] backdrop-blur-sm overflow-y-auto">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl my-8">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold italic text-gray-800">{activeTab === 'orders' ? 'Nouvelle Commande' : 'Opération Magasin'}</h2>
+              <button onClick={() => setShowForm(false)} aria-label="Fermer le formulaire" className="text-gray-400 bg-gray-100 p-2 rounded-full"><X size={20}/></button>
+            </div>
+
+            {activeTab === 'orders' && (
+              <form onSubmit={addOrder} className="space-y-4">
+                <input required type="date" aria-label="Date" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newOrder.date} onChange={e => setNewOrder({...newOrder, date: e.target.value})} />
+                <input required placeholder="Produit demandé" aria-label="Produit demandé" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newOrder.produit} onChange={e => setNewOrder({...newOrder, produit: e.target.value})} />
+                <input required placeholder="Quantité" aria-label="Quantité" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newOrder.qte} onChange={e => setNewOrder({...newOrder, qte: e.target.value})} />
+                <input required type="number" placeholder="Coût estimé (FCFA)" aria-label="Coût estimé (FCFA)" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newOrder.cout} onChange={e => setNewOrder({...newOrder, cout: e.target.value})} />
+                <button type="submit" className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold">Valider Commande</button>
+              </form>
+            )}
+
+            {activeTab === 'stock' && (
+              <form onSubmit={addStockTransaction} className="space-y-4">
+                <select required aria-label="Type d'opération" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200 font-bold" value={newStock.type} onChange={e => setNewStock({...newStock, type: e.target.value as 'entree'|'sortie'})}>
+                  <option value="entree">Entrée en stock</option>
+                  <option value="sortie">Sortie de stock</option>
+                </select>
+                <input required type="date" aria-label="Date" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.date} onChange={e => setNewStock({...newStock, date: e.target.value})} />
+                <input required placeholder="Nom du Produit" aria-label="Nom du Produit" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.produit} onChange={e => setNewStock({...newStock, produit: e.target.value})} />
+                <input required placeholder="Quantité (ex: 50 sacs, 10 L)" aria-label="Quantité" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.qte} onChange={e => setNewStock({...newStock, qte: e.target.value})} />
+                <input required type="number" placeholder="Valeur Total (FCFA)" aria-label="Valeur Total (FCFA)" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.cout} onChange={e => setNewStock({...newStock, cout: e.target.value})} />
+                <input required placeholder={newStock.type === 'entree' ? "Fournisseur" : "Bénéficiaire"} aria-label={newStock.type === 'entree' ? "Fournisseur" : "Bénéficiaire"} className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.acteur} onChange={e => setNewStock({...newStock, acteur: e.target.value})} />
+                <button type="submit" className="w-full bg-purple-600 text-white py-4 rounded-xl font-bold">Confirmer l'opération</button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
       <button aria-label="Nouveau Membre" onClick={startWizard} className="fixed bottom-20 right-4 md:bottom-8 md:right-8 bg-green-600 text-white w-16 h-16 rounded-full shadow-[0_10px_25px_rgba(22,163,74,0.5)] flex items-center justify-center hover:bg-green-700 transition-transform active:scale-95 z-[100]"><MapPin size={28} /><div className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold px-2 py-1 rounded-full shadow-md">+ Nouveau</div></button>
 
       <div className="md:hidden fixed bottom-0 w-full bg-white border-t flex items-center justify-around py-3 px-2 z-[90] shadow-[0_-5px_15px_rgba(0,0,0,0.05)] overflow-x-auto">
         <button onClick={() => setActiveTab('overview')} className={`flex flex-col items-center flex-1 min-w-[60px] ${activeTab === 'overview' ? 'text-green-600' : 'text-gray-400'}`}><TrendingUp size={20} /><span className="text-[9px] font-bold mt-1">Général</span></button>
         <button onClick={() => setActiveTab('members')} className={`flex flex-col items-center flex-1 min-w-[60px] ${activeTab === 'members' ? 'text-green-600' : 'text-gray-400'}`}><Users size={20} /><span className="text-[9px] font-bold mt-1">Paysans</span></button>
+        <button onClick={() => setActiveTab('stock')} className={`flex flex-col items-center flex-1 min-w-[60px] ${activeTab === 'stock' ? 'text-purple-600' : 'text-gray-400'}`}><Package size={20} /><span className="text-[9px] font-bold mt-1">Magasin</span></button>
+        <button onClick={() => setActiveTab('orders')} className={`flex flex-col items-center flex-1 min-w-[60px] ${activeTab === 'orders' ? 'text-green-600' : 'text-gray-400'}`}><ShoppingCart size={20} /><span className="text-[9px] font-bold mt-1">Achats</span></button>
         <button onClick={() => setActiveTab('map')} className={`flex flex-col items-center flex-1 min-w-[60px] ${activeTab === 'map' ? 'text-green-600' : 'text-gray-400'}`}><MapIcon size={20} /><span className="text-[9px] font-bold mt-1">Carte</span></button>
         <button onClick={() => setActiveTab('settings')} className={`flex flex-col items-center flex-1 min-w-[60px] ${activeTab === 'settings' ? 'text-gray-800' : 'text-gray-400'}`}><Settings size={20} /><span className="text-[9px] font-bold mt-1">Config</span></button>
       </div>
