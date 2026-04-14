@@ -5,7 +5,8 @@ import {
   Map as MapIcon, CloudRain, Sun, Trash2, LogOut, Lock, User,
   Package, ArrowDownToLine, ArrowUpFromLine, Check, 
   Play, Square, Undo, Navigation, MapPin, 
-  Settings, Banknote, Target, MapPin as MapPinDrop
+  Settings, Banknote, Target, MapPin as MapPinDrop,
+  Wheat, Coins, Leaf
 } from 'lucide-react';
 
 import * as XLSX from 'xlsx';
@@ -92,6 +93,17 @@ interface Member {
 interface Order { id: string; produit: string; qte: string; date: string; cout: string; statut: string; }
 interface StockTransaction { id: string; type: 'entree' | 'sortie'; produit: string; qte: string; date: string; cout: string; acteur: string; }
 
+// NOUVEAU TYPE : Récoltes et Ventes
+interface Harvest {
+  id: string;
+  type: 'recolte' | 'vente';
+  culture: string;
+  qte: number; // en Tonnes
+  date: string;
+  montant?: number; // en FCFA pour les ventes
+  acteur?: string; // acheteur ou groupement
+}
+
 // --- COMPOSANTS DE CARTE ---
 const AutoFitBounds = ({ members, defaultCenter }: { members: Member[], defaultCenter: Point }) => {
   const map = useMap();
@@ -130,7 +142,9 @@ const CoopDashboard: React.FC = () => {
   const [isLocating, setIsLocating] = useState(false);
 
   const [coopProfile, setCoopProfile] = useState<CoopProfile | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'members' | 'orders' | 'stock' | 'map' | 'settings'>('overview');
+  
+  // Onglets mis à jour avec 'harvests'
+  const [activeTab, setActiveTab] = useState<'overview' | 'members' | 'orders' | 'stock' | 'harvests' | 'map' | 'settings'>('overview');
   const [showForm, setShowForm] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [weather, setWeather] = useState<{ temp: number, isSunny: boolean } | null>(null);
@@ -138,6 +152,7 @@ const CoopDashboard: React.FC = () => {
   const [members, setMembers] = useState<Member[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [stock, setStock] = useState<StockTransaction[]>([]); 
+  const [harvests, setHarvests] = useState<Harvest[]>([]); 
 
   const [wizardStep, setWizardStep] = useState<0 | 1 | 2 | 3>(0); 
   const [parcelPoints, setParcelPoints] = useState<Point[]>([]);
@@ -151,6 +166,7 @@ const CoopDashboard: React.FC = () => {
   const [newOrder, setNewOrder] = useState<Partial<Order>>({ produit: '', qte: '', date: '', cout: '' });
   const [newStock, setNewStock] = useState<Partial<StockTransaction>>({ type: 'entree', produit: '', qte: '', date: '', cout: '', acteur: '' });
   const [newCrop, setNewCrop] = useState<CropConfig>({ nom: '', rendementHa: 0, prixTonne: 0 });
+  const [newHarvest, setNewHarvest] = useState<Partial<Harvest>>({ type: 'recolte', culture: '', qte: 0, date: new Date().toISOString().split('T')[0], montant: 0, acteur: '' });
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -177,11 +193,17 @@ const CoopDashboard: React.FC = () => {
 
           const mSnap = await getDocs(collection(db, "membres"));
           setMembers(mSnap.docs.map(d => ({ id: d.id, ...d.data() } as Member)));
+          
           const oSnap = await getDocs(collection(db, "commandes"));
           setOrders(oSnap.docs.map(d => ({ id: d.id, ...d.data() } as Order)));
+          
           const sSnap = await getDocs(collection(db, "magasin"));
           setStock(sSnap.docs.map(d => ({ id: d.id, ...d.data() } as StockTransaction)));
           
+          // Récupération des récoltes et ventes
+          const hSnap = await getDocs(collection(db, "recoltes"));
+          setHarvests(hSnap.docs.map(d => ({ id: d.id, ...d.data() } as Harvest)));
+
         } catch (error) { 
           console.error("Erreur de chargement", error); 
         } finally { 
@@ -192,6 +214,7 @@ const CoopDashboard: React.FC = () => {
     }
   }, [isLoggedIn]);
 
+  // --- CALCULS : Projections vs Réel ---
   const calculateProjections = () => {
     if (!coopProfile) return { totalRendement: 0, totalRevenu: 0 };
     let totalRendement = 0;
@@ -209,6 +232,9 @@ const CoopDashboard: React.FC = () => {
   };
 
   const projections = calculateProjections();
+  
+  const realHarvests = harvests.filter(h => h.type === 'recolte').reduce((sum, h) => sum + h.qte, 0);
+  const realSales = harvests.filter(h => h.type === 'vente').reduce((sum, h) => sum + (h.montant || 0), 0);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -256,7 +282,6 @@ const CoopDashboard: React.FC = () => {
       await updateDoc(doc(db, "cooperatives", auth.currentUser.uid), { cultures: updatedCultures });
       setCoopProfile({ ...coopProfile, cultures: updatedCultures });
       setNewCrop({ nom: '', rendementHa: 0, prixTonne: 0 });
-      alert("Culture ajoutée avec succès !");
     } catch (err) { 
         console.error(err);
         alert("Erreur lors de l'ajout de la culture"); 
@@ -343,7 +368,6 @@ const CoopDashboard: React.FC = () => {
       const docRef = await addDoc(collection(db, "membres"), { ...newMember, statut: "Actif" });
       setMembers([{ id: docRef.id, ...newMember, statut: "Actif" } as Member, ...members]);
       setWizardStep(0); setActiveTab('members');
-      alert("Membre enregistré avec succès !");
     } catch (err) { 
         console.error(err);
         alert("Erreur d'enregistrement."); 
@@ -352,6 +376,8 @@ const CoopDashboard: React.FC = () => {
 
   const addOrder = async (e: React.FormEvent) => { e.preventDefault(); try { const docRef = await addDoc(collection(db, "commandes"), { ...newOrder, statut: "En attente" }); setOrders([{ id: docRef.id, ...newOrder, statut: "En attente" } as Order, ...orders]); setShowForm(false); } catch (err) { console.error(err); alert("Erreur commande."); } };
   const addStockTransaction = async (e: React.FormEvent) => { e.preventDefault(); try { const docRef = await addDoc(collection(db, "magasin"), newStock); setStock([{ id: docRef.id, ...newStock } as StockTransaction, ...stock]); setShowForm(false); } catch (err) { console.error(err); alert("Erreur magasin."); } };
+  const addHarvestTransaction = async (e: React.FormEvent) => { e.preventDefault(); try { const docRef = await addDoc(collection(db, "recoltes"), newHarvest); setHarvests([{ id: docRef.id, ...newHarvest } as Harvest, ...harvests]); setShowForm(false); } catch (err) { console.error(err); alert("Erreur récolte/vente."); } };
+  
   const deleteDocGen = async <T extends { id: string }>(collectionName: string, id: string, setter: React.Dispatch<React.SetStateAction<T[]>>, state: T[]) => { if(window.confirm("Supprimer ?")) { try { await deleteDoc(doc(db, collectionName, id)); setter(state.filter(item => item.id !== id)); } catch (err) { console.error(err); alert("Erreur."); } } };
 
   const exportToExcel = () => {
@@ -360,13 +386,16 @@ const CoopDashboard: React.FC = () => {
 
     if (activeTab === 'members') {
       dataToExport = members.map(m => ({ Nom: m.nom, Village: m.village, Culture: m.culture, Surface: `${m.surface} ha`, Date: m.date, Frais: `${m.cout} FCFA`, Statut: m.statut }));
-      fileName = 'Liste_Membres_CAB.xlsx';
+      fileName = 'Liste_Membres.xlsx';
     } else if (activeTab === 'orders') {
       dataToExport = orders.map(o => ({ Produit: o.produit, Quantite: o.qte, Date: o.date, Cout: `${o.cout} FCFA`, Statut: o.statut }));
-      fileName = 'Liste_Commandes_CAB.xlsx';
+      fileName = 'Liste_Commandes.xlsx';
+    } else if (activeTab === 'harvests') {
+      dataToExport = harvests.map(h => ({ Type: h.type === 'recolte' ? 'Récolte' : 'Vente', Culture: h.culture, Quantite: `${h.qte} T`, Date: h.date, Montant: h.type === 'vente' ? `${h.montant} FCFA` : '-', Acteur: h.acteur || '-' }));
+      fileName = 'Suivi_Recoltes_Ventes.xlsx';
     } else {
       dataToExport = stock.map(s => ({ Type: s.type === 'entree' ? 'Entrée' : 'Sortie', Produit: s.produit, Quantite: s.qte, Date: s.date, Valeur: `${s.cout} FCFA`, Acteur: s.acteur }));
-      fileName = 'Historique_Magasin_CAB.xlsx';
+      fileName = 'Historique_Magasin.xlsx';
     }
     
     const worksheet = XLSX.utils.json_to_sheet(dataToExport);
@@ -384,17 +413,22 @@ const CoopDashboard: React.FC = () => {
       let fileName = 'Rapport.pdf';
 
       if (activeTab === 'members') {
-        title = 'ANNUAIRE DES MEMBRES - CAB';
+        title = 'ANNUAIRE DES PAYSANS';
         fileName = 'Rapport_Membres.pdf';
         tableHeaders = [["Nom", "Village", "Culture", "Date", "Frais", "Statut"]];
         tableData = members.map(m => [m.nom, m.village, m.culture, m.date, `${m.cout} FCFA`, m.statut]);
       } else if (activeTab === 'orders') {
-        title = 'SUIVI DES COMMANDES - CAB';
+        title = 'SUIVI DES ACHATS';
         fileName = 'Rapport_Commandes.pdf';
         tableHeaders = [["Produit", "Quantité", "Date", "Coût", "Statut"]];
         tableData = orders.map(o => [o.produit || "", o.qte || "", o.date || "", `${o.cout} FCFA`, o.statut || ""]);
+      } else if (activeTab === 'harvests') {
+        title = 'SUIVI DES RÉCOLTES & VENTES';
+        fileName = 'Rapport_Recoltes.pdf';
+        tableHeaders = [["Opération", "Culture", "Quantité (T)", "Date", "Montant (FCFA)", "Tiers"]];
+        tableData = harvests.map(h => [h.type === 'recolte' ? 'Récolte' : 'Vente', h.culture, h.qte.toString(), h.date, h.type === 'vente' ? h.montant?.toString() || "0" : "-", h.acteur || "-"]);
       } else {
-        title = 'HISTORIQUE DU MAGASIN (STOCKS) - CAB';
+        title = 'HISTORIQUE DU MAGASIN (STOCKS)';
         fileName = 'Rapport_Magasin.pdf';
         tableHeaders = [["Opération", "Produit", "Quantité", "Date", "Valeur", "Tiers"]];
         tableData = stock.map(s => [s.type === 'entree' ? 'Entrée' : 'Sortie', s.produit, s.qte, s.date, `${s.cout} FCFA`, s.acteur]);
@@ -403,16 +437,9 @@ const CoopDashboard: React.FC = () => {
       docPDF.setFontSize(16);
       docPDF.text(title, 14, 15);
       docPDF.setFontSize(10);
-      docPDF.text(coopProfile?.nom || "Coopérative Agricole", 14, 22);
+      docPDF.text(coopProfile?.nom || "Coopérative", 14, 22);
       
-      autoTable(docPDF, {
-        head: tableHeaders,
-        body: tableData,
-        startY: 30,
-        theme: 'grid',
-        headStyles: { fillColor: [22, 163, 74] } 
-      });
-
+      autoTable(docPDF, { head: tableHeaders, body: tableData, startY: 30, theme: 'grid', headStyles: { fillColor: [27, 67, 50] } });
       docPDF.save(fileName);
     } catch (err) { 
       console.error(err); 
@@ -420,35 +447,36 @@ const CoopDashboard: React.FC = () => {
     }
   };
 
-  if (authLoading) return <div className="min-h-screen bg-green-50 flex items-center justify-center"><p className="font-bold text-green-700">Chargement...</p></div>;
+  if (authLoading) return <div className="min-h-screen bg-[#F9F9F6] flex items-center justify-center"><p className="font-medium text-stone-600 animate-pulse">Chargement de votre espace...</p></div>;
   
   if (!isLoggedIn) {
     return (
-      <div className="min-h-screen bg-green-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl shadow-xl w-full max-w-md p-8 border border-green-100">
-          <div className="flex justify-center mb-6"><div className="bg-green-100 p-4 rounded-full"><Sprout size={48} className="text-green-600" /></div></div>
-          <h1 className="text-2xl font-bold text-center text-gray-800 mb-6">Gescoop - Réseau Agricole</h1>
+      <div className="min-h-screen bg-[#F9F9F6] flex items-center justify-center p-4 font-sans">
+        <div className="bg-white rounded-[2.5rem] shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] w-full max-w-md p-10 border border-stone-100">
+          <div className="flex justify-center mb-6"><div className="bg-emerald-50 p-5 rounded-full"><Leaf size={40} className="text-emerald-700" /></div></div>
+          <h1 className="text-3xl font-black text-center text-stone-800 mb-2 tracking-tight">Bienvenue</h1>
+          <p className="text-center text-stone-500 mb-8 font-medium">L'outil de gestion pensé pour les coopératives agricoles.</p>
           
-          <form onSubmit={handleAuth} className="space-y-4">
+          <form onSubmit={handleAuth} className="space-y-5">
             {authMode === 'register' && (
-              <>
+              <div className="space-y-5 bg-stone-50 p-5 rounded-3xl border border-stone-100">
                 <div className="relative">
-                  <Target className="absolute left-3 top-3 text-gray-400" size={20} />
-                  <input required type="text" aria-label="Nom de la Coopérative" placeholder="Nom de la Coopérative" className="w-full pl-10 p-3 bg-gray-50 rounded-xl border border-gray-200" value={registerData.nomCoop} onChange={e => setRegisterData({...registerData, nomCoop: e.target.value})} />
+                  <Target className="absolute left-4 top-4 text-stone-400" size={20} />
+                  <input required type="text" aria-label="Nom de la Coopérative" placeholder="Nom de votre coopérative" className="w-full pl-12 p-4 bg-white rounded-2xl border-none shadow-sm focus:ring-2 focus:ring-emerald-500 transition-all font-medium" value={registerData.nomCoop} onChange={e => setRegisterData({...registerData, nomCoop: e.target.value})} />
                 </div>
-                <button type="button" aria-label="Obtenir la position GPS" onClick={getLocationForRegistration} className={`w-full flex items-center justify-center gap-2 p-3 rounded-xl border ${isLocating ? 'bg-blue-50 border-blue-200 text-blue-600' : 'bg-gray-50 border-gray-200 text-gray-700'}`}>
+                <button type="button" aria-label="Obtenir la position GPS" onClick={getLocationForRegistration} className={`w-full flex items-center justify-center gap-2 p-4 rounded-2xl font-bold transition-all ${isLocating ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`}>
                   <MapPinDrop size={18} />
-                  {isLocating ? 'Localisation en cours...' : 'Capter la position GPS du siège'}
+                  {isLocating ? 'Recherche du signal GPS...' : 'Définir le siège de la coopérative'}
                 </button>
-                <p className="text-[10px] text-gray-500 text-center">La position servira pour la météo et les prévisions locales.</p>
-              </>
+                <p className="text-[11px] text-stone-400 text-center px-4 leading-tight">Cette étape est cruciale pour que nous puissions vous fournir des prévisions météo locales.</p>
+              </div>
             )}
 
-            <div className="relative"><User className="absolute left-3 top-3 text-gray-400" size={20} /><input required aria-label="Adresse e-mail" type="email" placeholder="Adresse e-mail" className="w-full pl-10 p-3 bg-gray-50 rounded-xl border border-gray-200" value={credentials.email} onChange={e => setCredentials({...credentials, email: e.target.value})} /></div>
-            <div className="relative"><Lock className="absolute left-3 top-3 text-gray-400" size={20} /><input required aria-label="Mot de passe" type="password" placeholder="Mot de passe" className="w-full pl-10 p-3 bg-gray-50 rounded-xl border border-gray-200" value={credentials.password} onChange={e => setCredentials({...credentials, password: e.target.value})} /></div>
-            <button type="submit" className="w-full bg-green-600 text-white py-3 rounded-xl font-bold">{authMode === 'register' ? "Créer la Coopérative" : "Se Connecter"}</button>
+            <div className="relative"><User className="absolute left-4 top-4 text-stone-400" size={20} /><input required aria-label="Adresse e-mail" type="email" placeholder="Adresse e-mail" className="w-full pl-12 p-4 bg-stone-50 rounded-2xl border border-stone-100 focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium" value={credentials.email} onChange={e => setCredentials({...credentials, email: e.target.value})} /></div>
+            <div className="relative"><Lock className="absolute left-4 top-4 text-stone-400" size={20} /><input required aria-label="Mot de passe" type="password" placeholder="Mot de passe secret" className="w-full pl-12 p-4 bg-stone-50 rounded-2xl border border-stone-100 focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium" value={credentials.password} onChange={e => setCredentials({...credentials, password: e.target.value})} /></div>
+            <button type="submit" className="w-full bg-[#1b4332] text-white py-4 rounded-2xl font-bold text-lg shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all">{authMode === 'register' ? "Créer l'espace" : "Entrer"}</button>
           </form>
-          <p className="text-center mt-6 text-sm"><button onClick={() => setAuthMode(authMode === 'register' ? 'login' : 'register')} className="text-green-600 font-bold">{authMode === 'register' ? "Déjà membre ? Connectez-vous" : "Créer une nouvelle coopérative"}</button></p>
+          <p className="text-center mt-8 text-sm"><button onClick={() => setAuthMode(authMode === 'register' ? 'login' : 'register')} className="text-stone-500 font-bold hover:text-emerald-700 transition-colors">{authMode === 'register' ? "Vous avez déjà un compte ? Entrez par ici." : "Nouvelle coopérative ? Créez un compte."}</button></p>
         </div>
       </div>
     );
@@ -456,38 +484,38 @@ const CoopDashboard: React.FC = () => {
 
   if (wizardStep === 1) {
     return (
-        <div className="fixed inset-0 bg-white z-[200] flex flex-col">
-          <div className="bg-green-700 text-white p-4 shadow-md flex justify-between items-center z-[210]">
-            <div><h2 className="font-bold text-lg">Relevé de la parcelle</h2><p className="text-green-200 text-xs">{parcelPoints.length} point(s) enregistré(s)</p></div>
-            <button onClick={() => setWizardStep(0)} aria-label="Fermer" className="bg-green-800 p-2 rounded-full"><X size={20}/></button>
+        <div className="fixed inset-0 bg-[#F9F9F6] z-[200] flex flex-col">
+          <div className="bg-[#1b4332] text-white p-5 shadow-md flex justify-between items-center z-[210] rounded-b-3xl">
+            <div><h2 className="font-bold text-lg">Tracé de la parcelle</h2><p className="text-emerald-200 text-sm font-medium">{parcelPoints.length} point(s) enregistré(s)</p></div>
+            <button onClick={() => setWizardStep(0)} aria-label="Fermer" className="bg-white/10 hover:bg-white/20 p-3 rounded-full transition-colors"><X size={24}/></button>
           </div>
-          <div className="flex-1 relative">
+          <div className="flex-1 relative mt-[-1rem] rounded-3xl overflow-hidden z-[200]">
             <MapContainer ref={setMapRef} center={coopProfile ? [coopProfile.lat, coopProfile.lng] : [9.5222, -6.4869]} zoom={12} style={{ height: '100%', width: '100%' }} zoomControl={false}>
               <TileLayer url="https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}" maxZoom={20} subdomains={['mt0','mt1','mt2','mt3']} />
               <MapController onMapClick={addManualPoint} />
               {currentLocation && <Marker position={[currentLocation.lat, currentLocation.lng]} icon={userLocationIcon} />}
               {parcelPoints.map((p, i) => <Marker key={i} position={[p.lat, p.lng]} icon={vertexIcon} />)}
-              {parcelPoints.length > 1 && <Polyline positions={parcelPoints.map(p => [p.lat, p.lng])} color="#16a34a" weight={4} />}
-              {parcelPoints.length >= 3 && <Polygon positions={parcelPoints.map(p => [p.lat, p.lng])} pathOptions={{ color: '#16a34a', fillColor: '#22c55e', fillOpacity: 0.3 }} />}
+              {parcelPoints.length > 1 && <Polyline positions={parcelPoints.map(p => [p.lat, p.lng])} color="#10b981" weight={5} />}
+              {parcelPoints.length >= 3 && <Polygon positions={parcelPoints.map(p => [p.lat, p.lng])} pathOptions={{ color: '#10b981', fillColor: '#34d399', fillOpacity: 0.4 }} />}
             </MapContainer>
-            <div className="absolute top-4 left-4 right-4 z-[400] flex justify-between">
-              <button aria-label="Recentrer la carte" onClick={() => { if(currentLocation && mapRef) mapRef.setView([currentLocation.lat, currentLocation.lng], 18, {animate: true}) }} className="bg-white p-3 rounded-full shadow-lg text-blue-600 flex items-center justify-center h-12 w-12"><Navigation size={24} /></button>
-              {parcelPoints.length > 0 && <button aria-label="Annuler le dernier point" onClick={undoLastPoint} className="bg-white px-4 py-2 rounded-full shadow-lg text-gray-700 font-bold flex gap-2 items-center h-12"><Undo size={20} /> <span className="text-sm">Annuler point</span></button>}
+            <div className="absolute top-8 left-4 right-4 z-[400] flex justify-between">
+              <button aria-label="Recentrer la carte" onClick={() => { if(currentLocation && mapRef) mapRef.setView([currentLocation.lat, currentLocation.lng], 18, {animate: true}) }} className="bg-white p-4 rounded-full shadow-xl text-blue-600 flex items-center justify-center hover:scale-105 transition-transform"><Navigation size={24} /></button>
+              {parcelPoints.length > 0 && <button aria-label="Annuler le dernier point" onClick={undoLastPoint} className="bg-white px-5 py-3 rounded-full shadow-xl text-stone-700 font-bold flex gap-2 items-center hover:bg-stone-50 transition-colors"><Undo size={20} /> <span className="text-sm">Effacer</span></button>}
             </div>
           </div>
-          <div className="bg-white rounded-t-3xl shadow-[0_-10px_20px_rgba(0,0,0,0.1)] z-[210] p-4 pb-8">
-            <div className="flex gap-2 mb-4">
-              <button aria-label="Démarrer ou arrêter l'enregistrement GPS" onClick={() => setIsTracking(!isTracking)} className={`flex-1 flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-colors ${isTracking ? 'bg-red-50 border-red-500 text-red-600' : 'bg-gray-50 border-gray-200 text-gray-700'}`}>
-                {isTracking ? <Square size={32} className="mb-2" /> : <Play size={32} className="mb-2 text-green-600" />}
-                <span className="font-bold text-sm text-center">{isTracking ? 'Stop Arpentage' : 'Démarrer (Marche)'}</span>
+          <div className="bg-white rounded-t-[2.5rem] shadow-[0_-15px_30px_rgba(0,0,0,0.05)] z-[210] p-6 pb-10">
+            <div className="flex gap-3 mb-5">
+              <button aria-label="Démarrer ou arrêter l'enregistrement GPS" onClick={() => setIsTracking(!isTracking)} className={`flex-1 flex flex-col items-center justify-center p-5 rounded-3xl border-2 transition-all ${isTracking ? 'bg-rose-50 border-rose-200 text-rose-600 shadow-inner' : 'bg-[#F9F9F6] border-stone-100 text-stone-700 hover:border-emerald-200'}`}>
+                {isTracking ? <Square size={32} className="mb-2" /> : <Play size={32} className="mb-2 text-emerald-600" />}
+                <span className="font-bold text-sm text-center">{isTracking ? 'Arrêter la marche' : 'Arpenter à pied'}</span>
               </button>
-              <button aria-label="Placer un point manuel" onClick={() => { if(currentLocation) addManualPoint(currentLocation) }} disabled={isTracking || !currentLocation} className="flex-1 flex flex-col items-center justify-center p-4 rounded-2xl bg-gray-50 border-2 border-gray-200 text-gray-700 disabled:opacity-50 hover:bg-gray-100">
-                <MapPin size={32} className="mb-2 text-blue-600" />
-                <span className="font-bold text-sm text-center">Placer un point ici</span>
+              <button aria-label="Placer un point manuel" onClick={() => { if(currentLocation) addManualPoint(currentLocation) }} disabled={isTracking || !currentLocation} className="flex-1 flex flex-col items-center justify-center p-5 rounded-3xl bg-[#F9F9F6] border-2 border-stone-100 text-stone-700 disabled:opacity-40 hover:border-blue-200 transition-all">
+                <MapPin size={32} className="mb-2 text-blue-500" />
+                <span className="font-bold text-sm text-center">Placer un point</span>
               </button>
             </div>
-            <button onClick={calculateAreaAndProceed} disabled={parcelPoints.length < 3 || isTracking} className="w-full h-14 bg-green-600 text-white rounded-2xl font-bold text-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:bg-gray-400">
-              <Check size={24} /> Terminer et Calculer
+            <button onClick={calculateAreaAndProceed} disabled={parcelPoints.length < 3 || isTracking} className="w-full h-16 bg-[#1b4332] text-white rounded-3xl font-black text-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:bg-stone-300 shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all">
+              <Check size={24} /> Calculer la surface
             </button>
           </div>
         </div>
@@ -496,13 +524,14 @@ const CoopDashboard: React.FC = () => {
 
   if (wizardStep === 2) {
     return (
-        <div className="fixed inset-0 bg-white z-[200] flex flex-col items-center justify-center p-6 text-center">
-          <div className="w-24 h-24 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-6"><MapIcon size={48} /></div>
-          <h2 className="text-3xl font-black text-gray-800 mb-2">Surface Estimée</h2>
-          <div className="bg-gray-50 border-2 border-green-500 rounded-2xl p-6 w-full max-w-sm mb-8 shadow-inner"><p className="text-6xl font-black text-green-600">{newMember.surface}</p><p className="text-xl font-bold text-gray-500 mt-2">Hectares (ha)</p></div>
+        <div className="fixed inset-0 bg-[#F9F9F6] z-[200] flex flex-col items-center justify-center p-6 text-center">
+          <div className="w-28 h-28 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center mb-8 shadow-inner"><MapIcon size={56} strokeWidth={1.5} /></div>
+          <h2 className="text-3xl font-black text-stone-800 mb-3 tracking-tight">Superbe parcelle !</h2>
+          <p className="text-stone-500 font-medium mb-8">Voici la taille exacte calculée par satellite :</p>
+          <div className="bg-white border-2 border-emerald-100 rounded-[2.5rem] p-8 w-full max-w-sm mb-10 shadow-xl shadow-emerald-900/5"><p className="text-6xl font-black text-emerald-600 tracking-tighter">{newMember.surface}</p><p className="text-xl font-bold text-stone-400 mt-2">Hectares (ha)</p></div>
           <div className="w-full max-w-sm space-y-4">
-            <button onClick={() => setWizardStep(3)} className="w-full h-14 bg-green-600 text-white rounded-2xl font-bold text-lg shadow-lg hover:bg-green-700">Valider cette mesure</button>
-            <button onClick={() => setWizardStep(1)} className="w-full h-14 bg-gray-100 text-gray-600 rounded-2xl font-bold text-lg border border-gray-300">Refaire le tracé</button>
+            <button onClick={() => setWizardStep(3)} className="w-full h-16 bg-[#1b4332] text-white rounded-2xl font-bold text-lg shadow-lg hover:shadow-xl transition-all">C'est parfait, on valide</button>
+            <button onClick={() => setWizardStep(1)} className="w-full h-16 bg-white text-stone-600 rounded-2xl font-bold text-lg border-2 border-stone-100 hover:bg-stone-50 transition-all">Je veux refaire le tracé</button>
           </div>
         </div>
       );
@@ -510,25 +539,26 @@ const CoopDashboard: React.FC = () => {
 
   if (wizardStep === 3) {
     return (
-        <div className="fixed inset-0 bg-gray-50 z-[200] overflow-y-auto">
-          <div className="bg-green-700 text-white p-4 shadow-md flex justify-between items-center sticky top-0"><h2 className="font-bold text-lg">Informations du Paysan</h2><button aria-label="Fermer" onClick={() => setWizardStep(0)} className="text-green-200"><X size={24}/></button></div>
-          <div className="p-4 max-w-md mx-auto mt-4">
-            <form onSubmit={addMemberFromWizard} className="space-y-4 bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
-              <div className="bg-green-50 p-4 rounded-xl border border-green-200 flex justify-between items-center"><span className="font-bold text-green-800">Superficie :</span><span className="text-xl font-black text-green-700">{newMember.surface} ha</span></div>
-              <div className="space-y-1"><label htmlFor="nomComplet" className="text-sm font-bold text-gray-600">Nom Complet</label><input id="nomComplet" required className="w-full p-4 bg-gray-50 rounded-xl border border-gray-200 text-lg" value={newMember.nom} onChange={e => setNewMember({...newMember, nom: e.target.value})} /></div>
-              <div className="space-y-1"><label htmlFor="village" className="text-sm font-bold text-gray-600">Village / Campement</label><input id="village" required className="w-full p-4 bg-gray-50 rounded-xl border border-gray-200 text-lg" value={newMember.village} onChange={e => setNewMember({...newMember, village: e.target.value})} /></div>
+        <div className="fixed inset-0 bg-[#F9F9F6] z-[200] overflow-y-auto">
+          <div className="bg-[#1b4332] text-white p-5 shadow-md flex justify-between items-center sticky top-0 z-10 rounded-b-3xl"><h2 className="font-bold text-lg">Profil du producteur</h2><button aria-label="Fermer" onClick={() => setWizardStep(0)} className="bg-white/10 p-2 rounded-full"><X size={24}/></button></div>
+          <div className="p-4 max-w-md mx-auto mt-6">
+            <form onSubmit={addMemberFromWizard} className="space-y-5 bg-white p-8 rounded-[2.5rem] shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] border border-stone-100">
+              <div className="bg-stone-50 p-5 rounded-2xl border border-stone-100 flex justify-between items-center mb-4"><span className="font-bold text-stone-600">Surface retenue :</span><span className="text-2xl font-black text-emerald-600">{newMember.surface} ha</span></div>
               
-              <div className="space-y-1">
-                <label htmlFor="cultureSelection" className="text-sm font-bold text-gray-600">Culture principale</label>
-                <select id="cultureSelection" required className="w-full p-4 bg-gray-50 rounded-xl border border-gray-200 text-lg" value={newMember.culture} onChange={e => setNewMember({...newMember, culture: e.target.value})}>
-                  <option value="" disabled>Sélectionner une culture</option>
+              <div className="space-y-2"><label htmlFor="nomComplet" className="text-sm font-bold text-stone-500 px-2">Comment s'appelle ce paysan ?</label><input id="nomComplet" required placeholder="Nom complet..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-lg text-stone-800" value={newMember.nom} onChange={e => setNewMember({...newMember, nom: e.target.value})} /></div>
+              <div className="space-y-2"><label htmlFor="village" className="text-sm font-bold text-stone-500 px-2">Dans quel campement/village ?</label><input id="village" required placeholder="Son village..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-lg text-stone-800" value={newMember.village} onChange={e => setNewMember({...newMember, village: e.target.value})} /></div>
+              
+              <div className="space-y-2">
+                <label htmlFor="cultureSelection" className="text-sm font-bold text-stone-500 px-2">Quelle est sa culture principale ?</label>
+                <select id="cultureSelection" required className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-lg text-stone-800" value={newMember.culture} onChange={e => setNewMember({...newMember, culture: e.target.value})}>
+                  <option value="" disabled>Choisir dans la liste...</option>
                   {coopProfile?.cultures.map((c, idx) => (
                     <option key={idx} value={c.nom}>{c.nom}</option>
                   ))}
                 </select>
               </div>
 
-              <button type="submit" className="w-full h-14 bg-green-600 text-white rounded-xl font-bold text-lg shadow-lg mt-8">Enregistrer dans la base</button>
+              <button type="submit" className="w-full h-16 bg-[#1b4332] text-white rounded-2xl font-black text-lg shadow-lg mt-8 hover:shadow-xl hover:-translate-y-0.5 transition-all">Enregistrer ce profil</button>
             </form>
           </div>
         </div>
@@ -538,128 +568,232 @@ const CoopDashboard: React.FC = () => {
   const filteredMembers = members.filter(m => m.nom.toLowerCase().includes(searchTerm.toLowerCase()));
   const filteredOrders = orders.filter(o => o.produit.toLowerCase().includes(searchTerm.toLowerCase()));
   const filteredStock = stock.filter(s => s.produit.toLowerCase().includes(searchTerm.toLowerCase()));
+  const filteredHarvests = harvests.filter(h => h.culture.toLowerCase().includes(searchTerm.toLowerCase()) || (h.acteur && h.acteur.toLowerCase().includes(searchTerm.toLowerCase())));
   
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
-      <div className="bg-green-700 text-white shadow-lg">
-        <div className="max-w-7xl mx-auto px-4 py-6 flex justify-between items-center">
+    <div className="min-h-screen bg-[#F9F9F6] pb-28 font-sans">
+      
+      {/* En-tête Organique et Chaleureux */}
+      <div className="bg-[#1b4332] text-white shadow-md rounded-b-[2.5rem] pb-10 pt-8 mb-[-2rem] relative z-10">
+        <div className="max-w-7xl mx-auto px-6 flex justify-between items-start">
           <div>
-            <p className="text-green-200 text-xs md:text-sm font-medium">Tableau de bord Agricole</p>
-            <h1 className="text-xl md:text-3xl font-bold uppercase">{coopProfile?.nom || "Chargement..."}</h1>
+            <p className="text-emerald-300 text-sm font-bold tracking-wider uppercase mb-1">Espace Coopérative</p>
+            <h1 className="text-3xl md:text-4xl font-black tracking-tight leading-tight">👋 Bonjour, <br className="md:hidden" />{coopProfile?.nom || "l'équipe"} !</h1>
+            <p className="text-emerald-100/80 mt-2 font-medium max-w-md">Voici un coup d'œil sur la situation de vos membres et de vos finances aujourd'hui.</p>
           </div>
-          <button aria-label="Se déconnecter" onClick={() => signOut(auth)} className="bg-red-500 p-2 rounded-lg text-sm font-bold flex items-center gap-2"><LogOut size={16} /></button>
+          <button aria-label="Se déconnecter" onClick={() => signOut(auth)} className="bg-white/10 hover:bg-white/20 p-3 rounded-2xl text-sm font-bold flex items-center transition-colors"><LogOut size={20} /></button>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 mt-6">
-        <div className="hidden md:flex bg-white rounded-xl shadow-sm mb-6 p-2 border border-gray-100 overflow-x-auto gap-2">
-          <button onClick={() => setActiveTab('overview')} className={`flex-1 py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === 'overview' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-50'}`}><TrendingUp size={18}/> Général</button>
-          <button onClick={() => setActiveTab('members')} className={`flex-1 py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === 'members' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-50'}`}><Users size={18}/> Paysans</button>
-          <button onClick={() => setActiveTab('stock')} className={`flex-1 py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === 'stock' ? 'bg-purple-100 text-purple-700' : 'text-gray-500 hover:bg-gray-50'}`}><Package size={18}/> Magasin</button>
-          <button onClick={() => setActiveTab('orders')} className={`flex-1 py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === 'orders' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-50'}`}><ShoppingCart size={18}/> Commandes</button>
-          <button onClick={() => setActiveTab('map')} className={`flex-1 py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === 'map' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-50'}`}><MapIcon size={18}/> Carte</button>
-          <button onClick={() => setActiveTab('settings')} className={`flex-1 py-3 rounded-lg font-bold flex justify-center items-center gap-2 ${activeTab === 'settings' ? 'bg-gray-200 text-gray-800' : 'text-gray-500 hover:bg-gray-50'}`}><Settings size={18}/> Configuration</button>
+      <div className="max-w-7xl mx-auto px-4 mt-6 relative z-20">
+        
+        {/* Navigation Desktop - Style Pilule Douce */}
+        <div className="hidden md:flex bg-white/80 backdrop-blur-md rounded-2xl shadow-sm mb-8 p-2 border border-white overflow-x-auto gap-2 max-w-fit mx-auto">
+          <button onClick={() => setActiveTab('overview')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'overview' ? 'bg-[#1b4332] text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><TrendingUp size={18}/> Résumé</button>
+          <button onClick={() => setActiveTab('members')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'members' ? 'bg-[#1b4332] text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><Users size={18}/> Producteurs</button>
+          <button onClick={() => setActiveTab('harvests')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'harvests' ? 'bg-amber-500 text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><Wheat size={18}/> Récoltes & Ventes</button>
+          <button onClick={() => setActiveTab('stock')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'stock' ? 'bg-purple-600 text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><Package size={18}/> Magasin</button>
+          <button onClick={() => setActiveTab('orders')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'orders' ? 'bg-[#1b4332] text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><ShoppingCart size={18}/> Achats</button>
+          <button onClick={() => setActiveTab('map')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'map' ? 'bg-blue-600 text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><MapIcon size={18}/> Cartographie</button>
+          <button onClick={() => setActiveTab('settings')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'settings' ? 'bg-stone-800 text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><Settings size={18}/> Configuration</button>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2 space-y-8">
 
             {activeTab === 'overview' && (
-              <div className="space-y-6">
+              <div className="space-y-8">
+                
+                {/* Cartes de Kpis Haut de page */}
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><Users className="text-blue-600 mb-2" size={32} /><p className="text-3xl font-bold">{members.length}</p><p className="text-xs font-medium text-gray-500">Membres</p></div>
-                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><MapIcon className="text-green-600 mb-2" size={32} /><p className="text-3xl font-bold">{members.reduce((acc, curr) => acc + parseFloat(curr.surface || '0'), 0).toFixed(2)} <span className="text-lg">ha</span></p><p className="text-xs font-medium text-gray-500">Surface Tracée</p></div>
-                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100"><Package className="text-purple-600 mb-2" size={32} /><p className="text-3xl font-bold">{stock.length}</p><p className="text-xs font-medium text-gray-500">Mouvements Stock</p></div>
+                  <div className="bg-white p-6 rounded-3xl shadow-[0_10px_20px_-10px_rgba(0,0,0,0.05)] border border-stone-100">
+                    <div className="bg-blue-50 w-12 h-12 rounded-2xl flex items-center justify-center mb-4"><Users className="text-blue-600" size={24} /></div>
+                    <p className="text-4xl font-black text-stone-800 tracking-tight">{members.length}</p>
+                    <p className="text-sm font-bold text-stone-400 mt-1">Producteurs</p>
+                  </div>
+                  <div className="bg-white p-6 rounded-3xl shadow-[0_10px_20px_-10px_rgba(0,0,0,0.05)] border border-stone-100">
+                    <div className="bg-emerald-50 w-12 h-12 rounded-2xl flex items-center justify-center mb-4"><MapIcon className="text-emerald-600" size={24} /></div>
+                    <p className="text-4xl font-black text-stone-800 tracking-tight">{members.reduce((acc, curr) => acc + parseFloat(curr.surface || '0'), 0).toFixed(2)} <span className="text-lg text-stone-500 font-bold">ha</span></p>
+                    <p className="text-sm font-bold text-stone-400 mt-1">Surface Sécurisée</p>
+                  </div>
+                  <div className="bg-white p-6 rounded-3xl shadow-[0_10px_20px_-10px_rgba(0,0,0,0.05)] border border-stone-100 col-span-2 md:col-span-1">
+                    <div className="bg-amber-50 w-12 h-12 rounded-2xl flex items-center justify-center mb-4"><Coins className="text-amber-500" size={24} /></div>
+                    <p className="text-3xl font-black text-stone-800 tracking-tight">{realSales.toLocaleString()} <span className="text-sm text-stone-500 font-bold">FCFA</span></p>
+                    <p className="text-sm font-bold text-stone-400 mt-1">Ventes réalisées</p>
+                  </div>
                 </div>
 
-                <div className="bg-gradient-to-r from-green-800 to-green-600 rounded-3xl p-6 text-white shadow-lg">
-                  <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Target size={20} /> Projections & Suivi Évaluation (Prévisionnel)</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-white/10 p-4 rounded-xl border border-white/20">
-                      <p className="text-green-100 text-sm">Volume de récolte estimé</p>
-                      <p className="text-3xl font-black mt-1">{projections.totalRendement.toLocaleString()} <span className="text-lg font-normal">Tonnes</span></p>
-                      <p className="text-xs text-green-200 mt-2">Basé sur le paramétrage des rendements/ha</p>
+                {/* Dashboard BI : Prévisions vs Réalité */}
+                <div className="bg-white rounded-[2.5rem] p-8 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] border border-stone-100 overflow-hidden relative">
+                  <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-50 rounded-full blur-3xl -z-10 translate-x-1/3 -translate-y-1/3"></div>
+                  
+                  <h3 className="font-black text-2xl text-stone-800 mb-6 flex items-center gap-3"><Target className="text-[#1b4332]" size={28} /> Suivi des Objectifs Annuels</h3>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    {/* Bloc Volumes */}
+                    <div className="space-y-4">
+                      <p className="text-stone-500 font-bold text-sm uppercase tracking-wider">Volume de Récolte</p>
+                      <div className="bg-stone-50 p-5 rounded-3xl border border-stone-100">
+                        <div className="flex justify-between items-end mb-2">
+                          <div>
+                            <p className="text-xs font-bold text-emerald-600 mb-1">RÉALISÉ</p>
+                            <p className="text-3xl font-black text-stone-800">{realHarvests.toLocaleString()} <span className="text-base text-stone-400">Tonnes</span></p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs font-bold text-stone-400 mb-1">PRÉVU</p>
+                            <p className="text-xl font-bold text-stone-400">{projections.totalRendement.toLocaleString()} <span className="text-sm">T</span></p>
+                          </div>
+                        </div>
+                        {/* Jauge de progression */}
+                        <div className="h-3 w-full bg-stone-200 rounded-full overflow-hidden mt-4">
+                          <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${Math.min(100, projections.totalRendement > 0 ? (realHarvests / projections.totalRendement) * 100 : 0)}%` }}></div>
+                        </div>
+                      </div>
                     </div>
-                    <div className="bg-white/10 p-4 rounded-xl border border-white/20">
-                      <p className="text-green-100 text-sm">Chiffre d'affaires potentiel</p>
-                      <p className="text-3xl font-black mt-1">{projections.totalRevenu.toLocaleString()} <span className="text-lg font-normal">FCFA</span></p>
-                      <p className="text-xs text-green-200 mt-2">Valeur marchande estimée des parcelles</p>
+
+                    {/* Bloc Financier */}
+                    <div className="space-y-4">
+                      <p className="text-stone-500 font-bold text-sm uppercase tracking-wider">Finances & Chiffre d'affaires</p>
+                      <div className="bg-stone-50 p-5 rounded-3xl border border-stone-100">
+                        <div className="flex justify-between items-end mb-2">
+                          <div>
+                            <p className="text-xs font-bold text-amber-600 mb-1">ENCAISSÉ</p>
+                            <p className="text-3xl font-black text-stone-800">{realSales.toLocaleString()} <span className="text-base text-stone-400">FCFA</span></p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs font-bold text-stone-400 mb-1">POTENTIEL</p>
+                            <p className="text-xl font-bold text-stone-400">{projections.totalRevenu.toLocaleString()} <span className="text-sm">FCFA</span></p>
+                          </div>
+                        </div>
+                        {/* Jauge de progression */}
+                        <div className="h-3 w-full bg-stone-200 rounded-full overflow-hidden mt-4">
+                          <div className="h-full bg-amber-500 rounded-full" style={{ width: `${Math.min(100, projections.totalRevenu > 0 ? (realSales / projections.totalRevenu) * 100 : 0)}%` }}></div>
+                        </div>
+                      </div>
                     </div>
+                  </div>
+                  
+                  <div className="mt-6 p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
+                    <p className="text-sm text-blue-800 font-medium leading-relaxed">💡 Ces données sont générées automatiquement en croisant la surface de vos producteurs (onglet Carte) avec les rendements estimés de vos cultures (onglet Configuration). Présentez ces chiffres à vos partenaires financiers pour faciliter l'obtention de fonds.</p>
                   </div>
                 </div>
               </div>
             )}
 
-            {(activeTab === 'members' || activeTab === 'orders' || activeTab === 'stock') && (
-              <div className="bg-white rounded-2xl p-4 md:p-6 shadow-sm border border-gray-100">
-                <div className="flex flex-col md:flex-row justify-between md:items-center mb-6 gap-4">
-                  <h2 className="text-xl font-bold text-gray-800">
-                    {activeTab === 'members' ? 'Annuaire des Paysans' : activeTab === 'orders' ? 'Suivi des Commandes' : 'Gestion du Magasin'}
-                  </h2>
-                  <div className="relative flex-1 w-full md:max-w-xs">
-                    <Search className="absolute left-3 top-3 text-gray-400" size={18} />
-                    <input type="text" aria-label="Rechercher" placeholder="Rechercher..." className="w-full pl-10 pr-4 py-2 bg-gray-50 rounded-lg border border-gray-200" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+            {(activeTab === 'members' || activeTab === 'orders' || activeTab === 'stock' || activeTab === 'harvests') && (
+              <div className="bg-white rounded-[2.5rem] p-6 md:p-8 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] border border-stone-100">
+                <div className="flex flex-col md:flex-row justify-between md:items-center mb-8 gap-6">
+                  <div>
+                    <h2 className="text-2xl font-black text-stone-800 tracking-tight">
+                      {activeTab === 'members' ? 'Vos Producteurs' : activeTab === 'orders' ? 'Dépenses & Achats' : activeTab === 'harvests' ? 'Récoltes & Ventes' : 'Magasin & Intrants'}
+                    </h2>
+                    <p className="text-stone-500 font-medium text-sm mt-1">
+                      {activeTab === 'harvests' ? 'Gérez ici tout ce qui sort de vos champs et ce que vous vendez.' : 'Retrouvez tout l\'historique enregistré.'}
+                    </p>
                   </div>
                   
-                  <div className="flex flex-wrap gap-2">
-                    <button onClick={exportToExcel} className="bg-green-50 text-green-700 border border-green-200 px-3 py-2 rounded-lg text-sm font-bold hover:bg-green-100 flex items-center gap-2"><FileSpreadsheet size={16} /> Excel</button>
-                    <button onClick={exportToPDF} className="bg-red-50 text-red-700 border border-red-200 px-3 py-2 rounded-lg text-sm font-bold hover:bg-red-100 flex items-center gap-2"><FileText size={16} /> PDF</button>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="relative w-full md:w-auto md:min-w-[250px]">
+                      <Search className="absolute left-4 top-3.5 text-stone-400" size={18} />
+                      <input type="text" aria-label="Rechercher" placeholder="Chercher un nom..." className="w-full pl-11 pr-4 py-3 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-[#1b4332] font-medium transition-all" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                    </div>
                     
-                    {(activeTab === 'orders' || activeTab === 'stock') && (
-                       <button onClick={() => setShowForm(true)} className={`${activeTab === 'stock' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-green-600 hover:bg-green-700'} text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2 font-bold ml-2`}>
-                         <Plus size={18} /> Nouveau
+                    <button aria-label="Export Excel" onClick={exportToExcel} className="bg-emerald-50 text-emerald-700 p-3 rounded-2xl hover:bg-emerald-100 transition-colors" title="Télécharger Excel"><FileSpreadsheet size={20} /></button>
+                    <button aria-label="Export PDF" onClick={exportToPDF} className="bg-rose-50 text-rose-700 p-3 rounded-2xl hover:bg-rose-100 transition-colors" title="Télécharger PDF"><FileText size={20} /></button>
+                    
+                    {(activeTab === 'orders' || activeTab === 'stock' || activeTab === 'harvests') && (
+                       <button onClick={() => setShowForm(true)} className={`px-5 py-3 rounded-2xl flex items-center justify-center gap-2 font-black shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all ${activeTab === 'stock' ? 'bg-purple-600 text-white' : activeTab === 'harvests' ? 'bg-amber-500 text-white' : 'bg-[#1b4332] text-white'}`}>
+                         <Plus size={20} /> Nouveau
                        </button>
                     )}
                   </div>
                 </div>
 
+                {/* LISTE DES MEMBRES */}
                 {activeTab === 'members' && (
                   <div className="grid gap-4">
+                    {filteredMembers.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Aucun producteur ne correspond à cette recherche.</p> : null}
                     {filteredMembers.map(m => (
-                      <div key={m.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-100">
-                        <div className="flex gap-4 items-center">
-                          <div className="w-12 h-12 bg-green-200 rounded-full flex items-center justify-center font-bold text-green-800 shrink-0">{m.nom[0]}</div>
+                      <div key={m.id} className="flex items-center justify-between p-5 bg-stone-50 rounded-3xl border border-stone-100 hover:border-emerald-200 hover:bg-emerald-50/30 transition-all group">
+                        <div className="flex gap-5 items-center">
+                          <div className="w-14 h-14 bg-emerald-100 rounded-[1rem] flex items-center justify-center font-black text-emerald-800 text-xl shrink-0">{m.nom[0]}</div>
                           <div>
-                            <p className="font-bold text-gray-800 flex items-center gap-2">{m.nom} {m.parcelle && <MapIcon size={14} className="text-green-600" />}</p>
-                            <p className="text-xs text-gray-500">{m.village} • {m.culture} • <strong className="text-green-700">{m.surface} ha</strong></p>
+                            <p className="font-black text-stone-800 text-lg flex items-center gap-2">{m.nom} {m.parcelle && <MapIcon size={16} className="text-emerald-500" title="Parcelle tracée" />}</p>
+                            <p className="text-sm font-medium text-stone-500">{m.village} • {m.culture} • <strong className="text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md ml-1">{m.surface} ha</strong></p>
                           </div>
                         </div>
-                        <button aria-label="Supprimer ce paysan" onClick={() => deleteDocGen("membres", m.id, setMembers, members)} className="text-red-400 hover:text-red-600"><Trash2 size={20} /></button>
+                        <button aria-label="Supprimer ce paysan" onClick={() => deleteDocGen("membres", m.id, setMembers, members)} className="text-stone-300 hover:text-rose-500 hover:bg-rose-50 p-3 rounded-2xl transition-all"><Trash2 size={20} /></button>
                       </div>
                     ))}
                   </div>
                 )}
 
+                {/* LISTE DES RÉCOLTES ET VENTES */}
+                {activeTab === 'harvests' && (
+                  <div className="grid gap-4">
+                     {filteredHarvests.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Aucune récolte ou vente enregistrée pour le moment. C'est la saison sèche ?</p> : null}
+                     {filteredHarvests.map(h => (
+                      <div key={h.id} className="flex items-center justify-between p-5 bg-stone-50 rounded-3xl border border-stone-100 gap-4 hover:bg-white hover:shadow-md transition-all">
+                        <div className="flex items-start gap-4">
+                          <div className={`p-3 rounded-2xl mt-1 ${h.type === 'recolte' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
+                            {h.type === 'recolte' ? <Wheat size={24} /> : <Coins size={24} />}
+                          </div>
+                          <div>
+                            <p className="font-black text-stone-800 text-lg">{h.type === 'recolte' ? 'Récolte enregistrée' : 'Vente conclue'}</p>
+                            <p className="text-sm font-medium text-stone-500 mb-2">{h.culture} • <strong className="text-stone-700">{h.qte} Tonnes</strong> {h.acteur && `• ${h.type === 'recolte' ? 'Par :' : 'À :'} ${h.acteur}`}</p>
+                            
+                            <div className="flex gap-2">
+                              <span className="text-xs font-bold text-stone-500 bg-stone-200 px-2 py-1 rounded-lg">📅 {h.date}</span>
+                              {h.type === 'vente' && <span className="text-xs font-bold text-amber-700 bg-amber-100 px-2 py-1 rounded-lg">💰 {h.montant?.toLocaleString()} FCFA</span>}
+                            </div>
+                          </div>
+                        </div>
+                        <button onClick={() => deleteDocGen("recoltes", h.id, setHarvests, harvests)} aria-label="Supprimer cette ligne" className="text-stone-300 hover:text-rose-500 hover:bg-rose-50 p-3 rounded-2xl transition-all"><Trash2 size={20} /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* LISTE DES STOCKS */}
                 {activeTab === 'stock' && (
                   <div className="grid gap-4">
+                    {filteredStock.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Le magasin est vide.</p> : null}
                     {filteredStock.map(s => (
-                      <div key={s.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-100 gap-4">
-                        <div className="flex items-start gap-3">
-                          <div className={`p-2 rounded-full mt-1 ${s.type === 'entree' ? 'bg-green-100 text-green-600' : 'bg-orange-100 text-orange-600'}`}>
-                            {s.type === 'entree' ? <ArrowDownToLine size={20} /> : <ArrowUpFromLine size={20} />}
+                      <div key={s.id} className="flex items-center justify-between p-5 bg-stone-50 rounded-3xl border border-stone-100 gap-4 hover:bg-white hover:shadow-md transition-all">
+                        <div className="flex items-start gap-4">
+                          <div className={`p-3 rounded-2xl mt-1 ${s.type === 'entree' ? 'bg-blue-100 text-blue-600' : 'bg-rose-100 text-rose-600'}`}>
+                            {s.type === 'entree' ? <ArrowDownToLine size={24} /> : <ArrowUpFromLine size={24} />}
                           </div>
                           <div>
-                            <p className="font-bold text-gray-800">{s.produit} <span className="text-sm font-normal">({s.qte})</span></p>
-                            <p className="text-xs text-gray-500 mb-1">{s.type === 'entree' ? 'Fournisseur :' : 'Bénéficiaire :'} <span className="font-bold text-gray-700">{s.acteur}</span></p>
-                            <span className="text-xs font-medium text-purple-700 bg-purple-100 px-2 py-1 rounded">Date: {s.date} | Val: {s.cout} FCFA</span>
+                            <p className="font-black text-stone-800 text-lg">{s.produit} <span className="text-base font-bold text-stone-400 ml-1">({s.qte})</span></p>
+                            <p className="text-sm font-medium text-stone-500 mb-2">{s.type === 'entree' ? 'Fourni par :' : 'Remis à :'} <span className="font-bold text-stone-700">{s.acteur}</span></p>
+                            <div className="flex gap-2">
+                              <span className="text-xs font-bold text-stone-500 bg-stone-200 px-2 py-1 rounded-lg">📅 {s.date}</span>
+                              <span className="text-xs font-bold text-purple-700 bg-purple-100 px-2 py-1 rounded-lg">🏷️ {s.cout} FCFA</span>
+                            </div>
                           </div>
                         </div>
-                        <button onClick={() => deleteDocGen("magasin", s.id, setStock, stock)} aria-label="Supprimer du stock" className="text-red-400 hover:text-red-600"><Trash2 size={20} /></button>
+                        <button onClick={() => deleteDocGen("magasin", s.id, setStock, stock)} aria-label="Supprimer du stock" className="text-stone-300 hover:text-rose-500 hover:bg-rose-50 p-3 rounded-2xl transition-all"><Trash2 size={20} /></button>
                       </div>
                     ))}
                   </div>
                 )}
 
+                {/* LISTE DES COMMANDES */}
                 {activeTab === 'orders' && (
                   <div className="grid gap-4">
+                    {filteredOrders.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Aucune dépense enregistrée.</p> : null}
                     {filteredOrders.map(o => (
-                      <div key={o.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-100 gap-4">
+                      <div key={o.id} className="flex items-center justify-between p-5 bg-stone-50 rounded-3xl border border-stone-100 gap-4 hover:bg-white hover:shadow-md transition-all">
                         <div>
-                          <p className="font-bold text-gray-800">{o.produit} <span className="text-sm font-normal text-gray-500">({o.qte})</span></p>
-                          <p className="text-xs font-medium text-blue-700 mt-1">Date: {o.date} | Coût: {o.cout} FCFA</p>
-                          <div className="flex items-center gap-2 text-xs font-bold text-green-600 mt-1"><Clock size={14} /> {o.statut}</div>
+                          <p className="font-black text-stone-800 text-lg">{o.produit} <span className="text-base font-bold text-stone-400 ml-1">({o.qte})</span></p>
+                          <p className="text-sm font-bold text-emerald-700 mt-1 mb-2">{o.cout} FCFA</p>
+                          <div className="flex items-center gap-3 text-xs font-bold">
+                            <span className="text-stone-500 bg-stone-200 px-2 py-1 rounded-lg">📅 {o.date}</span>
+                            <span className="text-amber-600 bg-amber-100 px-2 py-1 rounded-lg flex items-center gap-1"><Clock size={12} /> {o.statut}</span>
+                          </div>
                         </div>
-                        <button onClick={() => deleteDocGen("commandes", o.id, setOrders, orders)} aria-label="Supprimer la commande" className="text-red-400 hover:text-red-600"><Trash2 size={20} /></button>
+                        <button onClick={() => deleteDocGen("commandes", o.id, setOrders, orders)} aria-label="Supprimer la commande" className="text-stone-300 hover:text-rose-500 hover:bg-rose-50 p-3 rounded-2xl transition-all"><Trash2 size={20} /></button>
                       </div>
                     ))}
                   </div>
@@ -669,25 +803,31 @@ const CoopDashboard: React.FC = () => {
 
             {activeTab === 'settings' && (
               <div className="space-y-6">
-                <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-                  <h2 className="text-xl font-bold text-gray-800 mb-2 flex items-center gap-2"><Settings className="text-gray-500"/> Paramètres de la Coopérative</h2>
-                  <p className="text-sm text-gray-500 mb-6">Ajoutez les cultures exploitées par vos membres et estimez leurs rendements pour calculer les projections financières.</p>
+                <div className="bg-white rounded-[2.5rem] p-8 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] border border-stone-100">
+                  <div className="flex items-center gap-4 mb-3">
+                    <div className="p-3 bg-stone-100 rounded-2xl text-stone-600"><Settings size={28}/></div>
+                    <h2 className="text-2xl font-black text-stone-800 tracking-tight">Cultures & Rendements</h2>
+                  </div>
+                  <p className="text-base font-medium text-stone-500 mb-8 max-w-xl">C'est ici que la magie opère. Définissez les cultures gérées par votre coopérative et estimez leurs rendements pour que l'outil puisse calculer vos prévisions financières annuelles.</p>
                   
-                  <form onSubmit={addNewCrop} className="bg-gray-50 p-4 rounded-xl border border-gray-200 flex flex-col md:flex-row gap-4 mb-6">
-                    <div className="flex-1"><label htmlFor="nomCulture" className="text-xs font-bold text-gray-600">Nom (ex: Cacao)</label><input id="nomCulture" required className="w-full p-2 rounded border mt-1" value={newCrop.nom} onChange={e=>setNewCrop({...newCrop, nom: e.target.value})} /></div>
-                    <div className="flex-1"><label htmlFor="rendementCulture" className="text-xs font-bold text-gray-600">Rendement (Tonnes/Ha)</label><input id="rendementCulture" required type="number" step="0.1" className="w-full p-2 rounded border mt-1" value={newCrop.rendementHa || ''} onChange={e=>setNewCrop({...newCrop, rendementHa: parseFloat(e.target.value)})} /></div>
-                    <div className="flex-1"><label htmlFor="prixCulture" className="text-xs font-bold text-gray-600">Prix de vente (FCFA/T)</label><input id="prixCulture" required type="number" className="w-full p-2 rounded border mt-1" value={newCrop.prixTonne || ''} onChange={e=>setNewCrop({...newCrop, prixTonne: parseFloat(e.target.value)})} /></div>
-                    <button type="submit" className="bg-green-600 text-white px-4 py-2 rounded font-bold self-end md:mb-1">Ajouter</button>
+                  <form onSubmit={addNewCrop} className="bg-stone-50 p-6 rounded-3xl border border-stone-100 flex flex-col md:flex-row gap-5 mb-8">
+                    <div className="flex-1"><label htmlFor="nomCulture" className="text-sm font-bold text-stone-600 px-2">Nom (ex: Anacarde)</label><input id="nomCulture" required placeholder="Tapez ici..." className="w-full p-4 bg-white rounded-2xl border-none shadow-sm mt-2 focus:ring-2 focus:ring-emerald-500 transition-all font-medium" value={newCrop.nom} onChange={e=>setNewCrop({...newCrop, nom: e.target.value})} /></div>
+                    <div className="flex-1"><label htmlFor="rendementCulture" className="text-sm font-bold text-stone-600 px-2">Rendement (Tonnes/Ha)</label><input id="rendementCulture" required type="number" step="0.1" placeholder="Ex: 0.8" className="w-full p-4 bg-white rounded-2xl border-none shadow-sm mt-2 focus:ring-2 focus:ring-emerald-500 transition-all font-medium" value={newCrop.rendementHa || ''} onChange={e=>setNewCrop({...newCrop, rendementHa: parseFloat(e.target.value)})} /></div>
+                    <div className="flex-1"><label htmlFor="prixCulture" className="text-sm font-bold text-stone-600 px-2">Prix estimé (FCFA/Tonne)</label><input id="prixCulture" required type="number" placeholder="Ex: 400000" className="w-full p-4 bg-white rounded-2xl border-none shadow-sm mt-2 focus:ring-2 focus:ring-emerald-500 transition-all font-medium" value={newCrop.prixTonne || ''} onChange={e=>setNewCrop({...newCrop, prixTonne: parseFloat(e.target.value)})} /></div>
+                    <button type="submit" className="bg-[#1b4332] text-white px-6 py-4 rounded-2xl font-black self-end md:mb-[2px] shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all flex gap-2 items-center"><Plus size={20}/> Ajouter</button>
                   </form>
 
-                  <div className="grid gap-3">
+                  <div className="grid gap-4">
                     {coopProfile?.cultures.map((c, idx) => (
-                      <div key={idx} className="flex justify-between items-center p-3 border rounded-lg bg-white">
+                      <div key={idx} className="flex justify-between items-center p-5 border border-stone-100 rounded-3xl bg-white hover:border-emerald-200 transition-colors">
                         <div>
-                          <p className="font-bold text-green-800">{c.nom}</p>
-                          <p className="text-xs text-gray-500">Rendement: {c.rendementHa} T/ha • Prix: {c.prixTonne.toLocaleString()} FCFA/T</p>
+                          <p className="font-black text-xl text-stone-800 mb-1">{c.nom}</p>
+                          <div className="flex gap-3">
+                            <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-lg">🌱 Rendement attendu : {c.rendementHa} T/ha</span>
+                            <span className="text-xs font-bold text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg">🏷️ Prix marché : {c.prixTonne.toLocaleString()} FCFA/T</span>
+                          </div>
                         </div>
-                        <button aria-label="Supprimer cette culture" onClick={() => removeCrop(idx)} className="text-red-500 p-2 hover:bg-red-50 rounded"><Trash2 size={18}/></button>
+                        <button aria-label="Supprimer cette culture" onClick={() => removeCrop(idx)} className="text-stone-300 p-3 hover:bg-rose-50 hover:text-rose-500 rounded-2xl transition-colors"><Trash2 size={24}/></button>
                       </div>
                     ))}
                   </div>
@@ -696,9 +836,12 @@ const CoopDashboard: React.FC = () => {
             )}
 
             {activeTab === 'map' && (
-              <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 h-[600px] flex flex-col">
-                <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-gray-800"><MapIcon className="text-green-600" /> Carte des Parcelles</h2>
-                <div className="flex-1 rounded-xl overflow-hidden border border-gray-200 z-0 relative">
+              <div className="bg-white rounded-[2.5rem] p-6 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] border border-stone-100 h-[650px] flex flex-col relative overflow-hidden">
+                <div className="flex items-center gap-3 mb-6 relative z-10">
+                  <div className="p-3 bg-blue-50 rounded-2xl text-blue-600"><MapIcon size={24}/></div>
+                  <h2 className="text-2xl font-black text-stone-800 tracking-tight">Cadastre des Producteurs</h2>
+                </div>
+                <div className="flex-1 rounded-[2rem] overflow-hidden border-2 border-stone-100 z-0 relative shadow-inner">
                   {coopProfile && (
                     <MapContainer center={[coopProfile.lat, coopProfile.lng]} zoom={10} style={{ height: '100%', width: '100%' }}>
                       <TileLayer url="https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}" maxZoom={20} subdomains={['mt0','mt1','mt2','mt3']} />
@@ -706,17 +849,30 @@ const CoopDashboard: React.FC = () => {
                       {members.map((m) => (
                         <React.Fragment key={m.id}>
                           {m.parcelle && m.parcelle.length > 0 ? (
-                            <Polygon positions={m.parcelle.map(p => [p.lat, p.lng])} pathOptions={{ color: '#16a34a', fillColor: '#22c55e', fillOpacity: 0.6 }}>
-                              <Tooltip permanent direction="center" className="bg-white/90 border border-green-600 rounded px-2 py-1 shadow-sm text-xs font-bold text-green-800 text-center">{m.nom} <br/> {m.surface} ha</Tooltip>
+                            <Polygon positions={m.parcelle.map(p => [p.lat, p.lng])} pathOptions={{ color: '#10b981', fillColor: '#34d399', fillOpacity: 0.5 }}>
+                              <Tooltip permanent direction="center" className="bg-white/95 border-none rounded-xl px-3 py-2 shadow-lg text-xs font-bold text-[#1b4332] text-center backdrop-blur-sm">{m.nom} <br/> <span className="text-emerald-600">{m.surface} ha</span></Tooltip>
                               <Popup>
-                                <div className="text-sm min-w-[150px]"><strong className="text-lg text-green-700">{m.nom}</strong><div className="h-px bg-gray-200 my-2"></div><p className="mb-1"><strong>Village :</strong> {m.village}</p><p className="mb-1"><strong>Culture :</strong> {m.culture}</p><p className="mb-1"><strong>Surface :</strong> <span className="text-green-600 font-bold">{m.surface} ha</span></p></div>
+                                <div className="text-sm min-w-[160px] p-1 font-sans">
+                                  <strong className="text-xl font-black text-stone-800 block mb-2">{m.nom}</strong>
+                                  <div className="space-y-1.5 text-stone-600 font-medium">
+                                    <p className="flex justify-between"><span>Village:</span> <strong className="text-stone-800">{m.village}</strong></p>
+                                    <p className="flex justify-between"><span>Culture:</span> <strong className="text-stone-800">{m.culture}</strong></p>
+                                    <p className="flex justify-between items-center mt-2 pt-2 border-t border-stone-100"><span>Surface:</span> <strong className="text-emerald-600 text-lg bg-emerald-50 px-2 rounded-md">{m.surface} ha</strong></p>
+                                  </div>
+                                </div>
                               </Popup>
                             </Polygon>
                           ) : (
                             m.gps && (
                               <Marker position={[m.gps.lat, m.gps.lng]} icon={userLocationIcon}>
-                                <Tooltip permanent direction="top" offset={[0, -20]} className="bg-white/90 border border-blue-600 rounded px-2 py-1 shadow-sm text-xs font-bold text-blue-800 text-center">{m.nom}</Tooltip>
-                                <Popup><div className="text-sm min-w-[150px]"><strong className="text-lg text-blue-700">{m.nom}</strong><div className="h-px bg-gray-200 my-2"></div><p className="mb-1"><strong>Village :</strong> {m.village}</p><p className="text-xs text-gray-500 italic mt-2">(Point GPS simple)</p></div></Popup>
+                                <Tooltip permanent direction="top" offset={[0, -20]} className="bg-white/95 border-none rounded-xl px-3 py-2 shadow-lg text-xs font-bold text-blue-800 text-center backdrop-blur-sm">{m.nom}</Tooltip>
+                                <Popup>
+                                  <div className="text-sm min-w-[160px] p-1 font-sans">
+                                    <strong className="text-xl font-black text-stone-800 block mb-2">{m.nom}</strong>
+                                    <p className="mb-1 text-stone-600 font-medium"><strong>Village :</strong> {m.village}</p>
+                                    <p className="text-xs text-amber-600 bg-amber-50 p-2 rounded-lg font-bold text-center mt-3">📍 Coordonnées GPS simples (Aucun tracé)</p>
+                                  </div>
+                                </Popup>
                               </Marker>
                             )
                           )}
@@ -729,72 +885,123 @@ const CoopDashboard: React.FC = () => {
             )}
           </div>
 
-          <div className="space-y-6 mt-6 lg:mt-0">
-            <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-2xl border border-blue-200">
-              <h3 className="font-bold text-blue-800 mb-4 flex items-center gap-2"><CloudRain className="text-blue-600" /> Météo - Siège</h3>
+          <div className="space-y-8 mt-4 lg:mt-0">
+            {/* Widget Météo Humanisé */}
+            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-8 rounded-[2.5rem] border border-blue-100 relative overflow-hidden shadow-sm">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-white/40 rounded-full blur-2xl -translate-y-1/2 translate-x-1/4"></div>
+              <h3 className="font-black text-blue-900 mb-6 flex items-center gap-3 text-lg"><CloudRain className="text-blue-500" size={24}/> La météo au siège</h3>
               {weather ? (
-                <div className="flex items-center justify-between mb-2">
-                  <div><p className="text-4xl font-black text-blue-900">{weather.temp}°C</p><p className="text-sm font-bold text-blue-700 uppercase mt-1">{coopProfile?.nom}</p></div>
-                  {weather.isSunny ? <Sun size={48} className="text-yellow-500" /> : <CloudRain size={48} className="text-blue-400" />}
+                <div className="flex items-center justify-between relative z-10">
+                  <div>
+                    <p className="text-5xl font-black text-blue-950 tracking-tighter">{weather.temp}°<span className="text-3xl text-blue-800/60">C</span></p>
+                    <p className="text-sm font-bold text-blue-600 uppercase mt-2 tracking-wider">{coopProfile?.nom}</p>
+                  </div>
+                  <div className="bg-white/60 p-4 rounded-3xl backdrop-blur-sm shadow-sm border border-white">
+                    {weather.isSunny ? <Sun size={56} strokeWidth={1.5} className="text-amber-500" /> : <CloudRain size={56} strokeWidth={1.5} className="text-blue-400" />}
+                  </div>
                 </div>
-              ) : (<p className="text-sm text-blue-700">Chargement...</p>)}
-              <p className="text-[10px] text-blue-500 italic mt-4">Coordonnées : {coopProfile?.lat.toFixed(4)}, {coopProfile?.lng.toFixed(4)}</p>
+              ) : (<p className="text-sm font-medium text-blue-600 animate-pulse">Observation du ciel en cours...</p>)}
+              <p className="text-[11px] font-bold text-blue-400/80 uppercase tracking-widest mt-6">COORD. {coopProfile?.lat.toFixed(4)}, {coopProfile?.lng.toFixed(4)}</p>
             </div>
             
-            <div className="bg-yellow-50 p-6 rounded-2xl border border-yellow-200">
-               <h3 className="font-bold text-yellow-800 mb-2 flex items-center gap-2"><Banknote size={20} className="text-yellow-600"/> Accès au crédit</h3>
-               <p className="text-xs text-yellow-700">Vos tableaux de bord financiers sont calculés en temps réel. Gardez vos paramètres de rendement (onglet Configuration) à jour pour présenter des données fiables aux institutions financières.</p>
+            {/* Widget Info Banques */}
+            <div className="bg-stone-800 p-8 rounded-[2.5rem] text-stone-300 relative overflow-hidden shadow-xl shadow-stone-900/10">
+               <div className="absolute -bottom-10 -right-10 opacity-10"><Banknote size={150} /></div>
+               <h3 className="font-black text-white mb-4 flex items-center gap-3 text-lg"><Banknote size={24} className="text-emerald-400"/> Prêts & Financements</h3>
+               <p className="text-sm leading-relaxed font-medium">
+                 Vos données ont de la valeur. Le tableau de bord principal (Résumé) génère des indicateurs précis que vous pouvez exporter en PDF pour prouver la rentabilité de votre coopérative aux banques et investisseurs.
+               </p>
             </div>
           </div>
         </div>
       </div>
 
+      {/* FORMULAIRE MODAL (RÉCOLTES, ACHATS, MAGASIN) */}
       {showForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[100] backdrop-blur-sm overflow-y-auto">
-          <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl my-8">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold italic text-gray-800">{activeTab === 'orders' ? 'Nouvelle Commande' : 'Opération Magasin'}</h2>
-              <button onClick={() => setShowForm(false)} aria-label="Fermer le formulaire" className="text-gray-400 bg-gray-100 p-2 rounded-full"><X size={20}/></button>
+        <div className="fixed inset-0 bg-stone-900/40 flex items-center justify-center p-4 z-[100] backdrop-blur-md overflow-y-auto font-sans">
+          <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-md shadow-2xl my-8 border border-stone-100">
+            <div className="flex justify-between items-center mb-8">
+              <h2 className="text-2xl font-black text-stone-800 tracking-tight">
+                {activeTab === 'orders' ? 'Nouvelle Dépense' : activeTab === 'harvests' ? 'Enregistrer une Récolte/Vente' : 'Mouvement de stock'}
+              </h2>
+              <button onClick={() => setShowForm(false)} aria-label="Fermer le formulaire" className="text-stone-400 bg-stone-100 hover:bg-stone-200 hover:text-stone-600 p-3 rounded-full transition-colors"><X size={20}/></button>
             </div>
 
+            {/* Formulaire Récoltes et Ventes */}
+            {activeTab === 'harvests' && (
+              <form onSubmit={addHarvestTransaction} className="space-y-5">
+                <div className="flex gap-2 p-1 bg-stone-100 rounded-2xl mb-6">
+                  <button type="button" onClick={() => setNewHarvest({...newHarvest, type: 'recolte'})} className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all ${newHarvest.type === 'recolte' ? 'bg-white text-emerald-700 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}>🌾 J'ai récolté</button>
+                  <button type="button" onClick={() => setNewHarvest({...newHarvest, type: 'vente'})} className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all ${newHarvest.type === 'vente' ? 'bg-white text-amber-600 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}>💰 J'ai vendu</button>
+                </div>
+
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Date de l'opération</label><input required type="date" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-amber-500 font-medium text-stone-800" value={newHarvest.date} onChange={e => setNewHarvest({...newHarvest, date: e.target.value})} /></div>
+                
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-stone-500 px-2">Quelle culture ?</label>
+                  <select required className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-amber-500 font-medium text-stone-800" value={newHarvest.culture} onChange={e => setNewHarvest({...newHarvest, culture: e.target.value})}>
+                    <option value="" disabled>Choisir dans la liste...</option>
+                    {coopProfile?.cultures.map((c, idx) => <option key={idx} value={c.nom}>{c.nom}</option>)}
+                  </select>
+                </div>
+                
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Volume (en Tonnes)</label><input required type="number" step="0.1" placeholder="Ex: 12.5" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-amber-500 font-medium text-stone-800" value={newHarvest.qte || ''} onChange={e => setNewHarvest({...newHarvest, qte: parseFloat(e.target.value)})} /></div>
+                
+                {newHarvest.type === 'vente' && (
+                  <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Montant total reçu (FCFA)</label><input required type="number" placeholder="Ex: 1500000" className="w-full p-4 bg-amber-50 rounded-2xl border-none focus:ring-2 focus:ring-amber-500 font-bold text-amber-900" value={newHarvest.montant || ''} onChange={e => setNewHarvest({...newHarvest, montant: parseFloat(e.target.value)})} /></div>
+                )}
+                
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">{newHarvest.type === 'recolte' ? "Quel producteur ? (Optionnel)" : "Qui est l'acheteur ? (Optionnel)"}</label><input placeholder="Nom..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-amber-500 font-medium text-stone-800" value={newHarvest.acteur} onChange={e => setNewHarvest({...newHarvest, acteur: e.target.value})} /></div>
+                
+                <button type="submit" className="w-full bg-amber-500 text-white py-5 rounded-2xl font-black text-lg shadow-lg hover:shadow-xl hover:-translate-y-0.5 mt-4 transition-all">Valider l'opération</button>
+              </form>
+            )}
+
             {activeTab === 'orders' && (
-              <form onSubmit={addOrder} className="space-y-4">
-                <input required type="date" aria-label="Date" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newOrder.date} onChange={e => setNewOrder({...newOrder, date: e.target.value})} />
-                <input required placeholder="Produit demandé" aria-label="Produit demandé" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newOrder.produit} onChange={e => setNewOrder({...newOrder, produit: e.target.value})} />
-                <input required placeholder="Quantité" aria-label="Quantité" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newOrder.qte} onChange={e => setNewOrder({...newOrder, qte: e.target.value})} />
-                <input required type="number" placeholder="Coût estimé (FCFA)" aria-label="Coût estimé (FCFA)" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newOrder.cout} onChange={e => setNewOrder({...newOrder, cout: e.target.value})} />
-                <button type="submit" className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold">Valider Commande</button>
+              <form onSubmit={addOrder} className="space-y-5">
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Date de l'achat</label><input required type="date" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-[#1b4332] font-medium" value={newOrder.date} onChange={e => setNewOrder({...newOrder, date: e.target.value})} /></div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Qu'avez-vous acheté ?</label><input required placeholder="Ex: Engrais NPK..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-[#1b4332] font-medium" value={newOrder.produit} onChange={e => setNewOrder({...newOrder, produit: e.target.value})} /></div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Combien ?</label><input required placeholder="Ex: 50 sacs" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-[#1b4332] font-medium" value={newOrder.qte} onChange={e => setNewOrder({...newOrder, qte: e.target.value})} /></div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Combien ça a coûté ? (FCFA)</label><input required type="number" placeholder="Montant total..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-[#1b4332] font-medium" value={newOrder.cout} onChange={e => setNewOrder({...newOrder, cout: e.target.value})} /></div>
+                <button type="submit" className="w-full bg-[#1b4332] text-white py-5 rounded-2xl font-black text-lg shadow-lg hover:shadow-xl hover:-translate-y-0.5 mt-4 transition-all">Enregistrer la dépense</button>
               </form>
             )}
 
             {activeTab === 'stock' && (
-              <form onSubmit={addStockTransaction} className="space-y-4">
-                <select required aria-label="Type d'opération" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200 font-bold" value={newStock.type} onChange={e => setNewStock({...newStock, type: e.target.value as 'entree'|'sortie'})}>
-                  <option value="entree">Entrée en stock</option>
-                  <option value="sortie">Sortie de stock</option>
-                </select>
-                <input required type="date" aria-label="Date" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.date} onChange={e => setNewStock({...newStock, date: e.target.value})} />
-                <input required placeholder="Nom du Produit" aria-label="Nom du Produit" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.produit} onChange={e => setNewStock({...newStock, produit: e.target.value})} />
-                <input required placeholder="Quantité (ex: 50 sacs, 10 L)" aria-label="Quantité" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.qte} onChange={e => setNewStock({...newStock, qte: e.target.value})} />
-                <input required type="number" placeholder="Valeur Total (FCFA)" aria-label="Valeur Total (FCFA)" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.cout} onChange={e => setNewStock({...newStock, cout: e.target.value})} />
-                <input required placeholder={newStock.type === 'entree' ? "Fournisseur" : "Bénéficiaire"} aria-label={newStock.type === 'entree' ? "Fournisseur" : "Bénéficiaire"} className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200" value={newStock.acteur} onChange={e => setNewStock({...newStock, acteur: e.target.value})} />
-                <button type="submit" className="w-full bg-purple-600 text-white py-4 rounded-xl font-bold">Confirmer l'opération</button>
+              <form onSubmit={addStockTransaction} className="space-y-5">
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-stone-500 px-2">Que se passe-t-il ?</label>
+                  <select required className="w-full p-4 bg-purple-50 rounded-2xl border-none focus:ring-2 focus:ring-purple-500 font-bold text-purple-900" value={newStock.type} onChange={e => setNewStock({...newStock, type: e.target.value as 'entree'|'sortie'})}>
+                    <option value="entree">📥 Ça rentre dans le magasin</option>
+                    <option value="sortie">📤 Ça sort du magasin</option>
+                  </select>
+                </div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Aujourd'hui, le :</label><input required type="date" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-purple-500 font-medium" value={newStock.date} onChange={e => setNewStock({...newStock, date: e.target.value})} /></div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Quoi exactement ?</label><input required placeholder="Nom de l'article" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-purple-500 font-medium" value={newStock.produit} onChange={e => setNewStock({...newStock, produit: e.target.value})} /></div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Combien ?</label><input required placeholder="Ex: 10 Bidons" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-purple-500 font-medium" value={newStock.qte} onChange={e => setNewStock({...newStock, qte: e.target.value})} /></div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Valeur de la marchandise (FCFA)</label><input required type="number" placeholder="Valeur estimée..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-purple-500 font-medium" value={newStock.cout} onChange={e => setNewStock({...newStock, cout: e.target.value})} /></div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">{newStock.type === 'entree' ? "Fourni par qui ?" : "Donné à qui ?"}</label><input required placeholder="Nom de la personne" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-purple-500 font-medium" value={newStock.acteur} onChange={e => setNewStock({...newStock, acteur: e.target.value})} /></div>
+                <button type="submit" className="w-full bg-purple-600 text-white py-5 rounded-2xl font-black text-lg shadow-lg hover:shadow-xl hover:-translate-y-0.5 mt-4 transition-all">Mettre à jour le stock</button>
               </form>
             )}
           </div>
         </div>
       )}
 
-      <button aria-label="Nouveau Membre" onClick={startWizard} className="fixed bottom-20 right-4 md:bottom-8 md:right-8 bg-green-600 text-white w-16 h-16 rounded-full shadow-[0_10px_25px_rgba(22,163,74,0.5)] flex items-center justify-center hover:bg-green-700 transition-transform active:scale-95 z-[100]"><MapPin size={28} /><div className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold px-2 py-1 rounded-full shadow-md">+ Nouveau</div></button>
+      {/* BOUTON FLOTTANT ACTION RAPIDE */}
+      <button aria-label="Tracer une parcelle" onClick={startWizard} className="fixed bottom-24 right-6 md:bottom-10 md:right-10 bg-emerald-500 text-white w-16 h-16 rounded-[1.2rem] shadow-[0_15px_30px_rgba(16,185,129,0.4)] flex items-center justify-center hover:bg-emerald-400 transition-all hover:scale-110 active:scale-95 z-[90] border-2 border-emerald-400 rotate-3 hover:rotate-0">
+        <MapPin size={28} />
+      </button>
 
-      <div className="md:hidden fixed bottom-0 w-full bg-white border-t flex items-center justify-around py-3 px-2 z-[90] shadow-[0_-5px_15px_rgba(0,0,0,0.05)] overflow-x-auto">
-        <button onClick={() => setActiveTab('overview')} className={`flex flex-col items-center flex-1 min-w-[60px] ${activeTab === 'overview' ? 'text-green-600' : 'text-gray-400'}`}><TrendingUp size={20} /><span className="text-[9px] font-bold mt-1">Général</span></button>
-        <button onClick={() => setActiveTab('members')} className={`flex flex-col items-center flex-1 min-w-[60px] ${activeTab === 'members' ? 'text-green-600' : 'text-gray-400'}`}><Users size={20} /><span className="text-[9px] font-bold mt-1">Paysans</span></button>
-        <button onClick={() => setActiveTab('stock')} className={`flex flex-col items-center flex-1 min-w-[60px] ${activeTab === 'stock' ? 'text-purple-600' : 'text-gray-400'}`}><Package size={20} /><span className="text-[9px] font-bold mt-1">Magasin</span></button>
-        <button onClick={() => setActiveTab('orders')} className={`flex flex-col items-center flex-1 min-w-[60px] ${activeTab === 'orders' ? 'text-green-600' : 'text-gray-400'}`}><ShoppingCart size={20} /><span className="text-[9px] font-bold mt-1">Achats</span></button>
-        <button onClick={() => setActiveTab('map')} className={`flex flex-col items-center flex-1 min-w-[60px] ${activeTab === 'map' ? 'text-green-600' : 'text-gray-400'}`}><MapIcon size={20} /><span className="text-[9px] font-bold mt-1">Carte</span></button>
-        <button onClick={() => setActiveTab('settings')} className={`flex flex-col items-center flex-1 min-w-[60px] ${activeTab === 'settings' ? 'text-gray-800' : 'text-gray-400'}`}><Settings size={20} /><span className="text-[9px] font-bold mt-1">Config</span></button>
+      {/* NAVIGATION MOBILE - Fond Flouté organique */}
+      <div className="md:hidden fixed bottom-0 w-full bg-white/90 backdrop-blur-xl border-t border-stone-100 flex items-center justify-around py-3 px-2 z-[80] shadow-[0_-15px_40px_rgba(0,0,0,0.05)] overflow-x-auto pb-safe">
+        <button onClick={() => setActiveTab('overview')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'overview' ? 'text-[#1b4332]' : 'text-stone-400'}`}><TrendingUp size={22} /><span className="text-[10px] font-bold mt-1.5">Résumé</span></button>
+        <button onClick={() => setActiveTab('members')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'members' ? 'text-[#1b4332]' : 'text-stone-400'}`}><Users size={22} /><span className="text-[10px] font-bold mt-1.5">Paysans</span></button>
+        <button onClick={() => setActiveTab('harvests')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'harvests' ? 'text-amber-500' : 'text-stone-400'}`}><Wheat size={22} /><span className="text-[10px] font-bold mt-1.5">Récoltes</span></button>
+        <button onClick={() => setActiveTab('stock')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'stock' ? 'text-purple-600' : 'text-stone-400'}`}><Package size={22} /><span className="text-[10px] font-bold mt-1.5">Magasin</span></button>
+        <button onClick={() => setActiveTab('map')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'map' ? 'text-blue-600' : 'text-stone-400'}`}><MapIcon size={22} /><span className="text-[10px] font-bold mt-1.5">Carte</span></button>
       </div>
+
     </div>
   );
 };
