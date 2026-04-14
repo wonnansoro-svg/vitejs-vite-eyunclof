@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Users, Sprout, ShoppingCart, TrendingUp, Search,
+  Users, ShoppingCart, TrendingUp, Search,
   Clock, Plus, X, FileSpreadsheet, FileText, 
   Map as MapIcon, CloudRain, Sun, Trash2, LogOut, Lock, User,
   Package, ArrowDownToLine, ArrowUpFromLine, Check, 
@@ -93,15 +93,14 @@ interface Member {
 interface Order { id: string; produit: string; qte: string; date: string; cout: string; statut: string; }
 interface StockTransaction { id: string; type: 'entree' | 'sortie'; produit: string; qte: string; date: string; cout: string; acteur: string; }
 
-// NOUVEAU TYPE : Récoltes et Ventes
 interface Harvest {
   id: string;
   type: 'recolte' | 'vente';
   culture: string;
-  qte: number; // en Tonnes
+  qte: number;
   date: string;
-  montant?: number; // en FCFA pour les ventes
-  acteur?: string; // acheteur ou groupement
+  montant?: number;
+  acteur?: string;
 }
 
 // --- COMPOSANTS DE CARTE ---
@@ -143,7 +142,6 @@ const CoopDashboard: React.FC = () => {
 
   const [coopProfile, setCoopProfile] = useState<CoopProfile | null>(null);
   
-  // Onglets mis à jour avec 'harvests'
   const [activeTab, setActiveTab] = useState<'overview' | 'members' | 'orders' | 'stock' | 'harvests' | 'map' | 'settings'>('overview');
   const [showForm, setShowForm] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -200,7 +198,6 @@ const CoopDashboard: React.FC = () => {
           const sSnap = await getDocs(collection(db, "magasin"));
           setStock(sSnap.docs.map(d => ({ id: d.id, ...d.data() } as StockTransaction)));
           
-          // Récupération des récoltes et ventes
           const hSnap = await getDocs(collection(db, "recoltes"));
           setHarvests(hSnap.docs.map(d => ({ id: d.id, ...d.data() } as Harvest)));
 
@@ -214,7 +211,6 @@ const CoopDashboard: React.FC = () => {
     }
   }, [isLoggedIn]);
 
-  // --- CALCULS : Projections vs Réel ---
   const calculateProjections = () => {
     if (!coopProfile) return { totalRendement: 0, totalRevenu: 0 };
     let totalRendement = 0;
@@ -718,7 +714,7 @@ const CoopDashboard: React.FC = () => {
                         <div className="flex gap-5 items-center">
                           <div className="w-14 h-14 bg-emerald-100 rounded-[1rem] flex items-center justify-center font-black text-emerald-800 text-xl shrink-0">{m.nom[0]}</div>
                           <div>
-                            <p className="font-black text-stone-800 text-lg flex items-center gap-2">{m.nom} {m.parcelle && <MapIcon size={16} className="text-emerald-500" title="Parcelle tracée" />}</p>
+                            <p className="font-black text-stone-800 text-lg flex items-center gap-2">{m.nom} {m.parcelle && <span title="Parcelle tracée"><MapIcon size={16} className="text-emerald-500" /></span>}</p>
                             <p className="text-sm font-medium text-stone-500">{m.village} • {m.culture} • <strong className="text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md ml-1">{m.surface} ha</strong></p>
                           </div>
                         </div>
