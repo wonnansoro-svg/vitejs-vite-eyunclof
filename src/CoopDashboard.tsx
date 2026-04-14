@@ -13,7 +13,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable'; 
 
 import 'leaflet/dist/leaflet.css';
-import { MapContainer, TileLayer, Marker, Popup, Polygon, Polyline, useMapEvents, useMap  } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Tooltip, Polygon, Polyline, useMapEvents, useMap  } from 'react-leaflet';
 import L from 'leaflet';
 import * as turf from '@turf/turf';
 
@@ -538,14 +538,19 @@ const CoopDashboard: React.FC = () => {
         {/* Ajout du recentrage automatique */}
         <AutoFitBounds members={members} />
 
-        {members.map((m) => (
+    {members.map((m) => (
           <React.Fragment key={m.id}>
             {m.parcelle && m.parcelle.length > 0 ? (
               <Polygon 
                 positions={m.parcelle.map(p => [p.lat, p.lng])} 
                 pathOptions={{ color: '#16a34a', fillColor: '#22c55e', fillOpacity: 0.6 }}
               >
-                {/* Popup enrichi avec les infos de l'agriculteur */}
+                {/* L'étiquette permanente visible sans cliquer */}
+                <Tooltip permanent direction="center" className="bg-white/90 border border-green-600 rounded px-2 py-1 shadow-sm text-xs font-bold text-green-800 text-center">
+                  {m.nom} <br/> {m.surface} ha
+                </Tooltip>
+
+                {/* Le Popup détaillé qui s'ouvre si on clique quand même dessus */}
                 <Popup>
                   <div className="text-sm min-w-[150px]">
                     <strong className="text-lg text-green-700">{m.nom}</strong>
@@ -560,13 +565,18 @@ const CoopDashboard: React.FC = () => {
             ) : (
               m.gps && (
                 <Marker position={[m.gps.lat, m.gps.lng]} icon={userLocationIcon}>
+                  {/* Étiquette permanente pour les simples points GPS */}
+                  <Tooltip permanent direction="top" offset={[0, -20]} className="bg-white/90 border border-blue-600 rounded px-2 py-1 shadow-sm text-xs font-bold text-blue-800 text-center">
+                    {m.nom}
+                  </Tooltip>
+
                   <Popup>
                     <div className="text-sm min-w-[150px]">
                       <strong className="text-lg text-blue-700">{m.nom}</strong>
                       <div className="h-px bg-gray-200 my-2"></div>
                       <p className="mb-1"><strong>Village :</strong> {m.village}</p>
                       <p className="mb-1"><strong>Culture :</strong> {m.culture}</p>
-                      <p className="text-xs text-gray-500 italic mt-2">(Point GPS simple - Pas de tracé)</p>
+                      <p className="text-xs text-gray-500 italic mt-2">(Point GPS simple)</p>
                     </div>
                   </Popup>
                 </Marker>
