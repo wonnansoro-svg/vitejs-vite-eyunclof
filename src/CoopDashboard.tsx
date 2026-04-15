@@ -6,7 +6,7 @@ import {
   Package, ArrowDownToLine, ArrowUpFromLine, Check, 
   Play, Square, Undo, Navigation, MapPin, 
   Settings, Banknote, Target, MapPin as MapPinDrop,
-  Wheat, Coins, Leaf, QrCode, Scan, Printer, KeyRound, AlertTriangle
+  Wheat, Coins, Leaf, QrCode, Scan, Printer, KeyRound, AlertTriangle, Copy
 } from 'lucide-react';
 
 import * as XLSX from 'xlsx';
@@ -159,6 +159,7 @@ const CoopDashboard: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherError, setWeatherError] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const [members, setMembers] = useState<Member[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -221,7 +222,6 @@ const CoopDashboard: React.FC = () => {
               const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${currentProfile.lat}&longitude=${currentProfile.lng}&current_weather=true&daily=precipitation_probability,precipitation_sum&timezone=Africa%2FAbidjan&forecast_days=3`);
               const wData = await weatherRes.json();
 
-              // Fetch Reverse Geocoding (Location Name)
               let locName = "Localité";
               try {
                 const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${currentProfile.lat}&lon=${currentProfile.lng}`);
@@ -303,7 +303,6 @@ const CoopDashboard: React.FC = () => {
         const userCred = await createUserWithEmailAndPassword(auth, credentials.email, credentials.password);
         const newCoopId = "COOP-" + Math.random().toString(36).substr(2, 9).toUpperCase();
         
-        // Cultures par défaut adaptées à la Côte d'Ivoire
         await setDoc(doc(db, "cooperatives", newCoopId), {
           nom: registerData.nomCoop || "Ma Coopérative",
           lat: registerData.lat,
@@ -384,6 +383,14 @@ const CoopDashboard: React.FC = () => {
     }
   };
 
+  const copyToClipboard = () => {
+    if (appUser?.coopId) {
+      navigator.clipboard.writeText(appUser.coopId);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
   const addNewCrop = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!coopProfile || !appUser) return;
@@ -394,10 +401,10 @@ const CoopDashboard: React.FC = () => {
       await updateDoc(doc(db, "cooperatives", appUser.coopId), { cultures: updatedCultures });
       setCoopProfile({ ...coopProfile, cultures: updatedCultures });
       setNewCrop({ nom: '', rendementHa: 0, prixTonne: 0 });
-      alert("Paramètres mis à jour !");
+      alert("Culture ajoutée avec succès !");
     } catch (err) { 
         console.error(err);
-        alert("Erreur lors de la mise à jour des paramètres."); 
+        alert("Erreur lors de l'ajout de la culture."); 
     }
   };
 
@@ -747,7 +754,7 @@ const CoopDashboard: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#EAE6DF] pb-28 font-sans">
       
-      {/* NOUVEAU : MODAL DE REÇU AVEC QR CODE */}
+      {/* MODAL DE REÇU AVEC QR CODE */}
       {receiptMember && (
         <div className="fixed inset-0 bg-stone-900/80 flex items-center justify-center p-4 z-[500] backdrop-blur-sm">
           <div className="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl relative">
@@ -778,7 +785,7 @@ const CoopDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* NOUVEAU : MODAL SCANNER QR */}
+      {/* MODAL SCANNER QR */}
       {showScanner && (
         <div className="fixed inset-0 bg-stone-900/80 flex items-center justify-center p-4 z-[500] backdrop-blur-sm">
           <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 text-center shadow-2xl">
@@ -797,7 +804,7 @@ const CoopDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* En-tête Organique et Chaleureux */}
+      {/* En-tête Organique */}
       <div className="bg-[#1b4332] text-white shadow-md rounded-b-[2.5rem] pb-10 pt-8 mb-[-2rem] relative z-10">
         <div className="max-w-7xl mx-auto px-6 flex justify-between items-start">
           <div>
@@ -811,7 +818,7 @@ const CoopDashboard: React.FC = () => {
 
       <div className="max-w-7xl mx-auto px-4 mt-6 relative z-20">
         
-        {/* Navigation Desktop - Style Pilule Douce */}
+        {/* Navigation Desktop */}
         <div className="hidden md:flex bg-white/80 backdrop-blur-md rounded-2xl shadow-sm mb-8 p-2 border border-white overflow-x-auto gap-2 max-w-fit mx-auto">
           <button onClick={() => setActiveTab('overview')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'overview' ? 'bg-[#1b4332] text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><TrendingUp size={18}/> Résumé</button>
           <button onClick={() => setActiveTab('members')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'members' ? 'bg-[#1b4332] text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><Users size={18}/> Producteurs</button>
@@ -819,7 +826,7 @@ const CoopDashboard: React.FC = () => {
           <button onClick={() => setActiveTab('stock')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'stock' ? 'bg-purple-600 text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><Package size={18}/> Magasin</button>
           <button onClick={() => setActiveTab('orders')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'orders' ? 'bg-[#1b4332] text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><ShoppingCart size={18}/> Achats</button>
           <button onClick={() => setActiveTab('map')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'map' ? 'bg-blue-600 text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><MapIcon size={18}/> Cartographie</button>
-          <button onClick={() => setActiveTab('settings')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'settings' ? 'bg-stone-800 text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><Settings size={18}/> Configuration</button>
+          <button onClick={() => setActiveTab('settings')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'settings' ? 'bg-stone-800 text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><Settings size={18}/> Profil & Config</button>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -827,8 +834,6 @@ const CoopDashboard: React.FC = () => {
 
             {activeTab === 'overview' && (
               <div className="space-y-8">
-                
-                {/* Cartes de Kpis Haut de page */}
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                   <div className="bg-white p-6 rounded-3xl shadow-[0_10px_20px_-10px_rgba(0,0,0,0.05)] border border-stone-100">
                     <div className="bg-blue-50 w-12 h-12 rounded-2xl flex items-center justify-center mb-4"><Users className="text-blue-600" size={24} /></div>
@@ -847,7 +852,6 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Dashboard BI : Prévisions vs Réalité */}
                 <div className="bg-white rounded-[2.5rem] p-8 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] border border-stone-100 overflow-hidden relative">
                   <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-50 rounded-full blur-3xl -z-10 translate-x-1/3 -translate-y-1/3"></div>
                   
@@ -875,9 +879,6 @@ const CoopDashboard: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                  <div className="mt-6 p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
-                    <p className="text-sm text-blue-800 font-medium leading-relaxed">💡 Ces données sont générées automatiquement en croisant la surface de vos producteurs avec les rendements estimés de vos cultures (onglet Configuration). Présentez ces chiffres à vos partenaires financiers pour faciliter l'obtention de fonds.</p>
-                  </div>
                 </div>
               </div>
             )}
@@ -889,13 +890,9 @@ const CoopDashboard: React.FC = () => {
                     <h2 className="text-2xl font-black text-stone-800 tracking-tight">
                       {activeTab === 'members' ? 'Vos Producteurs' : activeTab === 'orders' ? 'Dépenses & Achats' : activeTab === 'harvests' ? 'Récoltes & Ventes' : 'Magasin & Intrants'}
                     </h2>
-                    <p className="text-stone-500 font-medium text-sm mt-1">
-                      {activeTab === 'harvests' ? 'Gérez ici tout ce qui sort de vos champs et ce que vous vendez.' : 'Retrouvez tout l\'historique enregistré.'}
-                    </p>
                   </div>
                   
                   <div className="flex flex-wrap items-center gap-3">
-                    
                     {activeTab === 'members' && (
                       <button onClick={() => setShowScanner(true)} className="bg-emerald-100 text-emerald-800 p-3 rounded-2xl hover:bg-emerald-200 transition-all font-bold flex items-center gap-2 shadow-sm" title="Scanner un Reçu">
                         <Scan size={20} className="text-emerald-600" /> Scanner
@@ -918,7 +915,6 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 </div>
 
-                {/* LISTE DES MEMBRES */}
                 {activeTab === 'members' && (
                   <div className="grid gap-4">
                     {filteredMembers.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Aucun producteur trouvé.</p> : null}
@@ -940,7 +936,6 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 )}
 
-                {/* AUTRES LISTES (Identiques) */}
                 {activeTab === 'harvests' && (
                   <div className="grid gap-4">
                      {filteredHarvests.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Aucune récolte ou vente enregistrée.</p> : null}
@@ -999,17 +994,45 @@ const CoopDashboard: React.FC = () => {
 
             {activeTab === 'settings' && (
               <div className="space-y-6">
-                {appUser?.role === 'admin' && (
-                  <div className="bg-emerald-50 rounded-[2.5rem] p-8 border border-emerald-200 flex flex-col md:flex-row gap-6 items-center justify-between shadow-sm">
+                
+                {/* NOUVEAU: Profil de la Coopérative (Visible pour Admin et Agents) */}
+                <div className="bg-white rounded-[2.5rem] p-8 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] border border-stone-100">
+                  <div className="flex items-center gap-4 mb-6">
+                    <div className="p-3 bg-emerald-50 rounded-2xl text-emerald-600"><Target size={28}/></div>
                     <div>
-                      <h3 className="text-xl font-black text-emerald-900 mb-2">Code d'invitation de la Coopérative</h3>
-                      <p className="text-sm text-emerald-700 font-medium">Donnez ce code unique à vos agents. Lorsqu'ils créeront leur compte via "Rejoindre Équipe", ils accéderont directement à votre base de données de manière sécurisée.</p>
-                    </div>
-                    <div className="bg-white px-6 py-4 rounded-2xl border-2 border-emerald-500 text-2xl font-mono font-black text-emerald-600 shadow-md whitespace-nowrap">
-                      {appUser.coopId}
+                      <h2 className="text-2xl font-black text-stone-800 tracking-tight">Profil de la Coopérative</h2>
+                      <p className="text-sm font-medium text-stone-500">Informations générales de votre espace de travail</p>
                     </div>
                   </div>
-                )}
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="bg-stone-50 p-6 rounded-3xl border border-stone-100">
+                      <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-1">Nom de la Coopérative</p>
+                      <p className="text-xl font-black text-stone-800">{coopProfile?.nom}</p>
+                    </div>
+                    
+                    <div className="bg-emerald-50 p-6 rounded-3xl border border-emerald-100 relative overflow-hidden">
+                      <p className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-1">Code d'invitation (Coop ID)</p>
+                      <div className="flex items-center justify-between">
+                        <p className="text-2xl font-mono font-black text-emerald-800">{appUser?.coopId}</p>
+                        <button onClick={copyToClipboard} className="p-2 bg-white rounded-xl shadow-sm text-emerald-600 hover:bg-emerald-600 hover:text-white transition-colors" title="Copier le code">
+                          {copied ? <Check size={20} /> : <Copy size={20} />}
+                        </button>
+                      </div>
+                      <p className="text-xs font-medium text-emerald-700/80 mt-2">Partagez ce code pour inviter de nouveaux agents.</p>
+                    </div>
+
+                    <div className="bg-stone-50 p-6 rounded-3xl border border-stone-100">
+                      <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-1">Votre Rôle</p>
+                      <p className="text-lg font-bold text-stone-700 capitalize">{appUser?.role === 'admin' ? '👑 Administrateur' : '👤 Agent / Utilisateur'}</p>
+                    </div>
+
+                    <div className="bg-stone-50 p-6 rounded-3xl border border-stone-100">
+                      <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-1">Siège (Coordonnées GPS)</p>
+                      <p className="text-lg font-bold text-stone-700">{coopProfile?.lat?.toFixed(4)}, {coopProfile?.lng?.toFixed(4)}</p>
+                    </div>
+                  </div>
+                </div>
 
                 <div className="bg-white rounded-[2.5rem] p-8 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] border border-stone-100">
                   <div className="flex items-center gap-4 mb-3">
@@ -1102,7 +1125,6 @@ const CoopDashboard: React.FC = () => {
           </div>
 
           <div className="space-y-8 mt-4 lg:mt-0">
-            {/* Widget Météo Complet avec Alertes 3 jours */}
             <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-8 rounded-[2.5rem] border border-blue-100 relative overflow-hidden shadow-sm">
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/40 rounded-full blur-2xl -translate-y-1/2 translate-x-1/4"></div>
               
@@ -1124,7 +1146,6 @@ const CoopDashboard: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Bloc 3 Jours d'alertes pluie */}
                   <div className="pt-5 border-t border-blue-200/50">
                     <p className="text-xs font-bold text-blue-800 mb-3 uppercase tracking-wider flex items-center gap-2"><AlertTriangle size={14} className="text-amber-500"/> Alertes Pluie (3 jours)</p>
                     <div className="space-y-2">
@@ -1231,13 +1252,13 @@ const CoopDashboard: React.FC = () => {
         <MapPin size={28} />
       </button>
 
-      {/* NAVIGATION MOBILE - Fond Flouté organique */}
+      {/* NAVIGATION MOBILE */}
       <div className="md:hidden fixed bottom-0 w-full bg-white/90 backdrop-blur-xl border-t border-stone-100 flex items-center justify-around py-3 px-2 z-[80] shadow-[0_-15px_40px_rgba(0,0,0,0.05)] overflow-x-auto pb-safe">
         <button onClick={() => setActiveTab('overview')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'overview' ? 'text-[#1b4332]' : 'text-stone-400'}`}><TrendingUp size={22} /><span className="text-[10px] font-bold mt-1.5">Résumé</span></button>
         <button onClick={() => setActiveTab('members')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'members' ? 'text-[#1b4332]' : 'text-stone-400'}`}><Users size={22} /><span className="text-[10px] font-bold mt-1.5">Paysans</span></button>
         <button onClick={() => setActiveTab('harvests')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'harvests' ? 'text-amber-500' : 'text-stone-400'}`}><Wheat size={22} /><span className="text-[10px] font-bold mt-1.5">Récoltes</span></button>
         <button onClick={() => setActiveTab('stock')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'stock' ? 'text-purple-600' : 'text-stone-400'}`}><Package size={22} /><span className="text-[10px] font-bold mt-1.5">Magasin</span></button>
-        <button onClick={() => setActiveTab('map')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'map' ? 'text-blue-600' : 'text-stone-400'}`}><MapIcon size={22} /><span className="text-[10px] font-bold mt-1.5">Carte</span></button>
+        <button onClick={() => setActiveTab('settings')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'settings' ? 'text-stone-800' : 'text-stone-400'}`}><Settings size={22} /><span className="text-[10px] font-bold mt-1.5">Profil</span></button>
       </div>
 
     </div>
