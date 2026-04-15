@@ -224,7 +224,7 @@ const CoopDashboard: React.FC = () => {
           setIsLoggedIn(true);
         } catch (e) {
           console.error("Lecture de l'utilisateur impossible (probablement hors ligne sans cache initial)", e);
-          setIsLoggedIn(true); // Autorise la connexion si Firebase Auth le permet (cache Auth)
+          setIsLoggedIn(true); 
         }
       } else {
         setIsLoggedIn(false);
@@ -245,7 +245,6 @@ const CoopDashboard: React.FC = () => {
             const currentProfile = { id: profileSnap.id, ...profileSnap.data() } as CoopProfile;
             setCoopProfile(currentProfile);
 
-            // Charger la météo uniquement si en ligne
             if (!isOffline) {
               try {
                 const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${currentProfile.lat}&longitude=${currentProfile.lng}&current_weather=true&daily=precipitation_probability,precipitation_sum&timezone=Africa%2FAbidjan&forecast_days=3`);
@@ -280,11 +279,10 @@ const CoopDashboard: React.FC = () => {
                  setWeatherError(true);
               }
             } else {
-              setWeatherError(true); // Afficher indisponible si hors ligne
+              setWeatherError(true);
             }
           }
 
-          // Les requêtes ci-dessous s'exécuteront même hors ligne grâce au cache Firebase !
           const qMembres = query(collection(db, "membres"), where("coopId", "==", appUser.coopId));
           const mSnap = await getDocs(qMembres);
           setMembers(mSnap.docs.map(d => ({ id: d.id, ...d.data() } as Member)));
@@ -433,6 +431,7 @@ const CoopDashboard: React.FC = () => {
       await updateDoc(doc(db, "cooperatives", appUser.coopId), { cultures: updatedCultures });
       setCoopProfile({ ...coopProfile, cultures: updatedCultures });
       setNewCrop({ nom: '', rendementHa: 0, prixTonne: 0 });
+      alert("Paramètres mis à jour !");
     } catch (err) { 
         console.error(err);
         alert("Erreur. Si vous êtes hors ligne, l'ajout se synchronisera plus tard."); 
@@ -604,10 +603,8 @@ const CoopDashboard: React.FC = () => {
     }
   };
 
-  // INDICATEUR DE CHARGEMENT PRINCIPAL
   if (authLoading) return <div className="min-h-screen bg-[#EAE6DF] flex items-center justify-center"><p className="font-medium text-stone-600 animate-pulse">Chargement de votre espace...</p></div>;
   
-  // ÉCRAN DE CONNEXION / INSCRIPTION
   if (!isLoggedIn) {
     return (
       <div className="min-h-screen bg-[#EAE6DF] flex items-center justify-center p-4 font-sans">
@@ -675,7 +672,10 @@ const CoopDashboard: React.FC = () => {
       <div className="fixed inset-0 bg-[#EAE6DF] z-[200] flex flex-col">
         <div className="bg-[#1b4332] text-white p-5 shadow-md flex justify-between items-center z-[210] rounded-b-3xl">
           <div>
-            <h2 className="font-bold text-lg flex items-center gap-2">Tracé de la parcelle {isOffline && <WifiOff size={16} className="text-amber-400" title="Hors Ligne"/>}</h2>
+            <h2 className="font-bold text-lg flex items-center gap-2">
+              Tracé de la parcelle 
+              {isOffline && <span title="Hors Ligne"><WifiOff size={16} className="text-amber-400" /></span>}
+            </h2>
             <p className="text-emerald-200 text-sm font-medium">{parcelPoints.length} point(s) enregistré(s)</p>
           </div>
           <button onClick={() => setWizardStep(0)} aria-label="Fermer" className="bg-white/10 hover:bg-white/20 p-3 rounded-full transition-colors"><X size={24}/></button>
@@ -988,7 +988,7 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 )}
 
-                {/* LISTE DES RÉCOLTES ET VENTES */}
+                {/* AUTRES LISTES (Identiques) */}
                 {activeTab === 'harvests' && (
                   <div className="grid gap-4">
                      {filteredHarvests.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Aucune récolte ou vente enregistrée.</p> : null}
@@ -1008,7 +1008,6 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 )}
 
-                {/* LISTE DES STOCKS */}
                 {activeTab === 'stock' && (
                   <div className="grid gap-4">
                     {filteredStock.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Le magasin est vide.</p> : null}
@@ -1028,7 +1027,6 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 )}
 
-                {/* LISTE DES COMMANDES */}
                 {activeTab === 'orders' && (
                   <div className="grid gap-4">
                     {filteredOrders.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Aucune dépense enregistrée.</p> : null}
@@ -1049,6 +1047,19 @@ const CoopDashboard: React.FC = () => {
 
             {activeTab === 'settings' && (
               <div className="space-y-6">
+                
+                {appUser?.role === 'admin' && (
+                  <div className="bg-emerald-50 rounded-[2.5rem] p-8 border border-emerald-200 flex flex-col md:flex-row gap-6 items-center justify-between shadow-sm">
+                    <div>
+                      <h3 className="text-xl font-black text-emerald-900 mb-2">Code d'invitation de la Coopérative</h3>
+                      <p className="text-sm text-emerald-700 font-medium">Donnez ce code unique à vos agents. Lorsqu'ils créeront leur compte via "Rejoindre Équipe", ils accéderont directement à votre base de données de manière sécurisée.</p>
+                    </div>
+                    <div className="bg-white px-6 py-4 rounded-2xl border-2 border-emerald-500 text-2xl font-mono font-black text-emerald-600 shadow-md whitespace-nowrap">
+                      {appUser.coopId}
+                    </div>
+                  </div>
+                )}
+
                 <div className="bg-white rounded-[2.5rem] p-8 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] border border-stone-100">
                   <div className="flex items-center gap-4 mb-6">
                     <div className="p-3 bg-emerald-50 rounded-2xl text-emerald-600"><Target size={28}/></div>
@@ -1136,7 +1147,6 @@ const CoopDashboard: React.FC = () => {
                 <div key={`map-container-${activeTab}`} className="flex-1 rounded-[2rem] overflow-hidden border-2 border-stone-100 z-0 relative shadow-inner">
                   {coopProfile && (
                     <MapContainer center={[coopProfile.lat, coopProfile.lng]} zoom={10} style={{ height: '100%', width: '100%' }}>
-                      {/* Affichage des tuiles uniquement si on est en ligne ou qu'on a le cache, mais le fallback Leaflet gère le vide automatiquement */}
                       <TileLayer url="https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}" maxZoom={20} subdomains={['mt0','mt1','mt2','mt3']} />
                       
                       <MapInvalidator />
