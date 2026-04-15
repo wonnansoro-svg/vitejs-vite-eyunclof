@@ -6,7 +6,7 @@ import {
   Package, ArrowDownToLine, ArrowUpFromLine, Check, 
   Play, Square, Undo, Navigation, MapPin, 
   Settings, Banknote, Target, MapPin as MapPinDrop,
-  Wheat, Coins, Leaf, QrCode, Scan, Printer, KeyRound, AlertTriangle, Copy
+  Wheat, Coins, Leaf, QrCode, Scan, Printer, KeyRound, AlertTriangle, Copy, WifiOff
 } from 'lucide-react';
 
 import * as XLSX from 'xlsx';
@@ -44,7 +44,7 @@ const vertexIcon = new L.Icon({
 
 // --- CONFIGURATION FIREBASE ---
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, setDoc, getDoc, updateDoc, query, where } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, setDoc, getDoc, updateDoc, query, where, enableIndexedDbPersistence } from 'firebase/firestore';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 
 const firebaseConfig = {
@@ -59,6 +59,15 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
+
+// ACTIVATION DU MODE HORS LIGNE (PERSISTANCE)
+enableIndexedDbPersistence(db).catch((err) => {
+  if (err.code === 'failed-precondition') {
+    console.warn("La persistance hors ligne ne peut être activée que dans un seul onglet à la fois.");
+  } else if (err.code === 'unimplemented') {
+    console.warn("Le navigateur actuel ne supporte pas la persistance hors ligne.");
+  }
+});
 
 // --- TYPES ---
 interface Point { lat: number; lng: number }
@@ -147,6 +156,20 @@ const CoopDashboard: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(true); 
   const [authMode, setAuthMode] = useState<'login' | 'register_admin' | 'register_agent'>('login');
   
+  // GESTION DU RÉSEAU (HORS LIGNE)
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   const [credentials, setCredentials] = useState({ email: '', password: '' });
   const [registerData, setRegisterData] = useState({ nomCoop: '', coopIdToJoin: '', lat: 9.5222, lng: -6.4869 });
   const [isLocating, setIsLocating] = useState(false);
@@ -189,15 +212,20 @@ const CoopDashboard: React.FC = () => {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        const userDoc = await getDoc(doc(db, "users", user.uid));
-        if (userDoc.exists()) {
-          setAppUser(userDoc.data() as AppUser);
-        } else {
-          const legacyUser: AppUser = { uid: user.uid, email: user.email || '', role: 'admin', coopId: user.uid };
-          await setDoc(doc(db, "users", user.uid), legacyUser);
-          setAppUser(legacyUser);
+        try {
+          const userDoc = await getDoc(doc(db, "users", user.uid));
+          if (userDoc.exists()) {
+            setAppUser(userDoc.data() as AppUser);
+          } else {
+            const legacyUser: AppUser = { uid: user.uid, email: user.email || '', role: 'admin', coopId: user.uid };
+            await setDoc(doc(db, "users", user.uid), legacyUser);
+            setAppUser(legacyUser);
+          }
+          setIsLoggedIn(true);
+        } catch (e) {
+          console.error("Lecture de l'utilisateur impossible (probablement hors ligne sans cache initial)", e);
+          setIsLoggedIn(true); // Autorise la connexion si Firebase Auth le permet (cache Auth)
         }
-        setIsLoggedIn(true);
       } else {
         setIsLoggedIn(false);
         setAppUser(null);
@@ -217,41 +245,46 @@ const CoopDashboard: React.FC = () => {
             const currentProfile = { id: profileSnap.id, ...profileSnap.data() } as CoopProfile;
             setCoopProfile(currentProfile);
 
-            // Fetch Advanced Weather & Alerts
-            try {
-              const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${currentProfile.lat}&longitude=${currentProfile.lng}&current_weather=true&daily=precipitation_probability,precipitation_sum&timezone=Africa%2FAbidjan&forecast_days=3`);
-              const wData = await weatherRes.json();
-
-              let locName = "Localité";
+            // Charger la météo uniquement si en ligne
+            if (!isOffline) {
               try {
-                const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${currentProfile.lat}&lon=${currentProfile.lng}`);
-                const geoData = await geoRes.json();
-                if (geoData && geoData.address) {
-                  locName = geoData.address.city || geoData.address.town || geoData.address.village || geoData.address.county || geoData.address.state || "Côte d'Ivoire";
+                const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${currentProfile.lat}&longitude=${currentProfile.lng}&current_weather=true&daily=precipitation_probability,precipitation_sum&timezone=Africa%2FAbidjan&forecast_days=3`);
+                const wData = await weatherRes.json();
+
+                let locName = "Localité";
+                try {
+                  const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${currentProfile.lat}&lon=${currentProfile.lng}`);
+                  const geoData = await geoRes.json();
+                  if (geoData && geoData.address) {
+                    locName = geoData.address.city || geoData.address.town || geoData.address.village || geoData.address.county || geoData.address.state || "Côte d'Ivoire";
+                  }
+                } catch(e) {
+                   console.warn("Erreur géocodage inversé.");
                 }
+
+                const alerts = wData.daily.time.map((t: string, i: number) => ({
+                  date: t,
+                  prob: wData.daily.precipitation_probability[i] || 0,
+                  sum: wData.daily.precipitation_sum[i] || 0
+                }));
+
+                setWeather({
+                  temp: wData.current_weather.temperature,
+                  isSunny: wData.current_weather.weathercode <= 3,
+                  locationName: locName,
+                  alerts
+                });
+                setWeatherError(false);
               } catch(e) {
-                 console.warn("Erreur géocodage inversé.");
+                 console.error("Erreur API Météo", e);
+                 setWeatherError(true);
               }
-
-              const alerts = wData.daily.time.map((t: string, i: number) => ({
-                date: t,
-                prob: wData.daily.precipitation_probability[i] || 0,
-                sum: wData.daily.precipitation_sum[i] || 0
-              }));
-
-              setWeather({
-                temp: wData.current_weather.temperature,
-                isSunny: wData.current_weather.weathercode <= 3,
-                locationName: locName,
-                alerts
-              });
-              setWeatherError(false);
-            } catch(e) {
-               console.error("Erreur API Météo", e);
-               setWeatherError(true);
+            } else {
+              setWeatherError(true); // Afficher indisponible si hors ligne
             }
           }
 
+          // Les requêtes ci-dessous s'exécuteront même hors ligne grâce au cache Firebase !
           const qMembres = query(collection(db, "membres"), where("coopId", "==", appUser.coopId));
           const mSnap = await getDocs(qMembres);
           setMembers(mSnap.docs.map(d => ({ id: d.id, ...d.data() } as Member)));
@@ -269,12 +302,12 @@ const CoopDashboard: React.FC = () => {
           setHarvests(hSnap.docs.map(d => ({ id: d.id, ...d.data() } as Harvest)));
 
         } catch (error) { 
-          console.error("Erreur de chargement des données", error); 
+          console.error("Erreur de chargement des données (Cache vide ?)", error); 
         }
       };
       fetchData();
     }
-  }, [isLoggedIn, appUser]);
+  }, [isLoggedIn, appUser, isOffline]);
 
   const calculateProjections = () => {
     if (!coopProfile) return { totalRendement: 0, totalRevenu: 0 };
@@ -298,6 +331,11 @@ const CoopDashboard: React.FC = () => {
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isOffline) {
+      alert("La première connexion ou la création de compte nécessite une connexion internet. Veuillez vous connecter au réseau.");
+      return;
+    }
+    
     try {
       if (authMode === 'register_admin') {
         const userCred = await createUserWithEmailAndPassword(auth, credentials.email, credentials.password);
@@ -329,15 +367,9 @@ const CoopDashboard: React.FC = () => {
         });
 
       } else if (authMode === 'register_agent') {
-        if (!registerData.coopIdToJoin) {
-          alert("Veuillez entrer le Code de la coopérative fourni par votre administrateur.");
-          return;
-        }
+        if (!registerData.coopIdToJoin) return alert("Veuillez entrer le Code de la coopérative.");
         const coopDoc = await getDoc(doc(db, "cooperatives", registerData.coopIdToJoin));
-        if (!coopDoc.exists()) {
-          alert("Code coopérative introuvable !");
-          return;
-        }
+        if (!coopDoc.exists()) return alert("Code coopérative introuvable !");
 
         const userCred = await createUserWithEmailAndPassword(auth, credentials.email, credentials.password);
         await setDoc(doc(db, "users", userCred.user.uid), {
@@ -401,10 +433,9 @@ const CoopDashboard: React.FC = () => {
       await updateDoc(doc(db, "cooperatives", appUser.coopId), { cultures: updatedCultures });
       setCoopProfile({ ...coopProfile, cultures: updatedCultures });
       setNewCrop({ nom: '', rendementHa: 0, prixTonne: 0 });
-      alert("Culture ajoutée avec succès !");
     } catch (err) { 
         console.error(err);
-        alert("Erreur lors de l'ajout de la culture."); 
+        alert("Erreur. Si vous êtes hors ligne, l'ajout se synchronisera plus tard."); 
     }
   };
 
@@ -417,7 +448,6 @@ const CoopDashboard: React.FC = () => {
         setCoopProfile({ ...coopProfile, cultures: updatedCultures });
       } catch (err) { 
         console.error(err);
-        alert("Erreur de suppression."); 
       }
     }
   };
@@ -494,9 +524,7 @@ const CoopDashboard: React.FC = () => {
       setMembers([completeMember, ...members]);
       setWizardStep(0); 
       setActiveTab('members');
-      
       setReceiptMember(completeMember);
-
     } catch (err) { 
         console.error(err);
         alert("Erreur d'enregistrement."); 
@@ -507,7 +535,7 @@ const CoopDashboard: React.FC = () => {
   const addStockTransaction = async (e: React.FormEvent) => { e.preventDefault(); if(!appUser) return; try { const docRef = await addDoc(collection(db, "magasin"), { ...newStock, coopId: appUser.coopId}); setStock([{ id: docRef.id, ...newStock, coopId: appUser.coopId } as StockTransaction, ...stock]); setShowForm(false); } catch (err) { console.error(err); alert("Erreur magasin."); } };
   const addHarvestTransaction = async (e: React.FormEvent) => { e.preventDefault(); if(!appUser) return; try { const docRef = await addDoc(collection(db, "recoltes"), { ...newHarvest, coopId: appUser.coopId}); setHarvests([{ id: docRef.id, ...newHarvest, coopId: appUser.coopId } as Harvest, ...harvests]); setShowForm(false); } catch (err) { console.error(err); alert("Erreur récolte/vente."); } };
   
-  const deleteDocGen = async <T extends { id: string }>(collectionName: string, id: string, setter: React.Dispatch<React.SetStateAction<T[]>>, state: T[]) => { if(window.confirm("Supprimer définitivement ?")) { try { await deleteDoc(doc(db, collectionName, id)); setter(state.filter(item => item.id !== id)); } catch (err) { console.error(err); alert("Erreur."); } } };
+  const deleteDocGen = async <T extends { id: string }>(collectionName: string, id: string, setter: React.Dispatch<React.SetStateAction<T[]>>, state: T[]) => { if(window.confirm("Supprimer définitivement ?")) { try { await deleteDoc(doc(db, collectionName, id)); setter(state.filter(item => item.id !== id)); } catch (err) { console.error(err); alert("Erreur. La suppression se fera au retour du réseau."); } } };
 
   const exportToExcel = () => {
     let dataToExport;
@@ -576,8 +604,10 @@ const CoopDashboard: React.FC = () => {
     }
   };
 
+  // INDICATEUR DE CHARGEMENT PRINCIPAL
   if (authLoading) return <div className="min-h-screen bg-[#EAE6DF] flex items-center justify-center"><p className="font-medium text-stone-600 animate-pulse">Chargement de votre espace...</p></div>;
   
+  // ÉCRAN DE CONNEXION / INSCRIPTION
   if (!isLoggedIn) {
     return (
       <div className="min-h-screen bg-[#EAE6DF] flex items-center justify-center p-4 font-sans">
@@ -586,7 +616,13 @@ const CoopDashboard: React.FC = () => {
           <h1 className="text-3xl font-black text-center text-stone-800 mb-2 tracking-tight">Gescoop Pro</h1>
           <p className="text-center text-stone-500 mb-8 font-medium">Logiciel de gestion pour coopératives</p>
           
-          {authMode !== 'login' && (
+          {isOffline && (
+            <div className="bg-amber-100 text-amber-800 p-4 rounded-2xl mb-6 text-sm font-bold flex items-center gap-2">
+              <WifiOff size={20} className="shrink-0" /> Impossible de se connecter ou de créer un compte hors ligne. Rapprochez-vous d'une zone couverte.
+            </div>
+          )}
+
+          {!isOffline && authMode !== 'login' && (
             <div className="flex gap-2 mb-6 bg-stone-100 p-1 rounded-2xl">
               <button onClick={() => setAuthMode('register_admin')} className={`flex-1 py-2 text-sm font-bold rounded-xl transition-all ${authMode === 'register_admin' ? 'bg-white shadow-sm text-stone-800' : 'text-stone-500'}`}>Créer Coop</button>
               <button onClick={() => setAuthMode('register_agent')} className={`flex-1 py-2 text-sm font-bold rounded-xl transition-all ${authMode === 'register_agent' ? 'bg-white shadow-sm text-stone-800' : 'text-stone-500'}`}>Rejoindre Équipe</button>
@@ -595,7 +631,7 @@ const CoopDashboard: React.FC = () => {
 
           <form onSubmit={handleAuth} className="space-y-4">
             
-            {authMode === 'register_admin' && (
+            {authMode === 'register_admin' && !isOffline && (
               <div className="space-y-4 bg-emerald-50/50 p-5 rounded-3xl border border-emerald-100 mb-6">
                 <div className="relative">
                   <Target className="absolute left-4 top-4 text-emerald-600" size={20} />
@@ -607,38 +643,50 @@ const CoopDashboard: React.FC = () => {
               </div>
             )}
 
-            {authMode === 'register_agent' && (
+            {authMode === 'register_agent' && !isOffline && (
               <div className="relative mb-6">
                 <KeyRound className="absolute left-4 top-4 text-amber-500" size={20} />
                 <input required type="text" aria-label="Code Coopérative" placeholder="Code Coopérative (Ex: COOP-123)" className="w-full pl-12 p-4 bg-amber-50 rounded-2xl border border-amber-200 focus:bg-white focus:ring-2 focus:ring-amber-500 transition-all font-bold text-amber-900 placeholder-amber-300 uppercase" value={registerData.coopIdToJoin} onChange={e => setRegisterData({...registerData, coopIdToJoin: e.target.value.toUpperCase()})} />
               </div>
             )}
 
-            <div className="relative"><User className="absolute left-4 top-4 text-stone-400" size={20} /><input required aria-label="Adresse e-mail" type="email" placeholder="Adresse e-mail" className="w-full pl-12 p-4 bg-stone-50 rounded-2xl border border-stone-100 focus:bg-white focus:ring-2 focus:ring-[#1b4332] transition-all font-medium" value={credentials.email} onChange={e => setCredentials({...credentials, email: e.target.value})} /></div>
-            <div className="relative"><Lock className="absolute left-4 top-4 text-stone-400" size={20} /><input required aria-label="Mot de passe" type="password" placeholder="Mot de passe secret" className="w-full pl-12 p-4 bg-stone-50 rounded-2xl border border-stone-100 focus:bg-white focus:ring-2 focus:ring-[#1b4332] transition-all font-medium" value={credentials.password} onChange={e => setCredentials({...credentials, password: e.target.value})} /></div>
-            <button type="submit" className="w-full bg-[#1b4332] text-white py-4 rounded-2xl font-black text-lg shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all mt-4">{authMode === 'login' ? "Entrer dans l'espace" : "Créer mon compte"}</button>
+            <div className="relative"><User className="absolute left-4 top-4 text-stone-400" size={20} /><input required aria-label="Adresse e-mail" type="email" placeholder="Adresse e-mail" disabled={isOffline && authMode !== 'login'} className="w-full pl-12 p-4 bg-stone-50 rounded-2xl border border-stone-100 focus:bg-white focus:ring-2 focus:ring-[#1b4332] transition-all font-medium disabled:opacity-50" value={credentials.email} onChange={e => setCredentials({...credentials, email: e.target.value})} /></div>
+            <div className="relative"><Lock className="absolute left-4 top-4 text-stone-400" size={20} /><input required aria-label="Mot de passe" type="password" placeholder="Mot de passe secret" disabled={isOffline && authMode !== 'login'} className="w-full pl-12 p-4 bg-stone-50 rounded-2xl border border-stone-100 focus:bg-white focus:ring-2 focus:ring-[#1b4332] transition-all font-medium disabled:opacity-50" value={credentials.password} onChange={e => setCredentials({...credentials, password: e.target.value})} /></div>
+            <button type="submit" disabled={isOffline && authMode !== 'login'} className="w-full bg-[#1b4332] text-white py-4 rounded-2xl font-black text-lg shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all mt-4 disabled:opacity-50">{authMode === 'login' ? "Entrer dans l'espace" : "Créer mon compte"}</button>
           </form>
 
-          <div className="mt-8 pt-6 border-t border-stone-100 text-center space-y-3">
-             {authMode !== 'login' ? (
-                <button onClick={() => setAuthMode('login')} className="text-stone-500 font-bold hover:text-[#1b4332] transition-colors">J'ai déjà un compte, me connecter.</button>
-             ) : (
-                <button onClick={() => setAuthMode('register_agent')} className="text-stone-500 font-bold hover:text-[#1b4332] transition-colors">Je n'ai pas de compte. S'inscrire.</button>
-             )}
-          </div>
+          {!isOffline && (
+            <div className="mt-8 pt-6 border-t border-stone-100 text-center space-y-3">
+              {authMode !== 'login' ? (
+                  <button onClick={() => setAuthMode('login')} className="text-stone-500 font-bold hover:text-[#1b4332] transition-colors">J'ai déjà un compte, me connecter.</button>
+              ) : (
+                  <button onClick={() => setAuthMode('register_agent')} className="text-stone-500 font-bold hover:text-[#1b4332] transition-colors">Je n'ai pas de compte. S'inscrire.</button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );
   }
 
-  // --- RENDUS WIZARD ---
+  // --- RENDUS WIZARD (TRACÉ GPS) ---
   if (wizardStep === 1) { 
     return ( 
       <div className="fixed inset-0 bg-[#EAE6DF] z-[200] flex flex-col">
         <div className="bg-[#1b4332] text-white p-5 shadow-md flex justify-between items-center z-[210] rounded-b-3xl">
-          <div><h2 className="font-bold text-lg">Tracé de la parcelle</h2><p className="text-emerald-200 text-sm font-medium">{parcelPoints.length} point(s) enregistré(s)</p></div>
+          <div>
+            <h2 className="font-bold text-lg flex items-center gap-2">Tracé de la parcelle {isOffline && <WifiOff size={16} className="text-amber-400" title="Hors Ligne"/>}</h2>
+            <p className="text-emerald-200 text-sm font-medium">{parcelPoints.length} point(s) enregistré(s)</p>
+          </div>
           <button onClick={() => setWizardStep(0)} aria-label="Fermer" className="bg-white/10 hover:bg-white/20 p-3 rounded-full transition-colors"><X size={24}/></button>
         </div>
+        
+        {isOffline && (
+          <div className="bg-amber-100 text-amber-800 p-2 text-xs font-bold text-center z-[210] flex justify-center items-center gap-2">
+            <WifiOff size={14}/> Fond de carte satellite indisponible hors ligne. Le GPS fonctionne toujours.
+          </div>
+        )}
+
         <div className="flex-1 relative mt-[-1rem] rounded-3xl overflow-hidden z-[200]">
           <MapContainer ref={setMapRef} center={coopProfile ? [coopProfile.lat, coopProfile.lng] : [9.5222, -6.4869]} zoom={12} style={{ height: '100%', width: '100%' }} zoomControl={false}>
             <TileLayer url="https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}" maxZoom={20} subdomains={['mt0','mt1','mt2','mt3']} />
@@ -808,7 +856,10 @@ const CoopDashboard: React.FC = () => {
       <div className="bg-[#1b4332] text-white shadow-md rounded-b-[2.5rem] pb-10 pt-8 mb-[-2rem] relative z-10">
         <div className="max-w-7xl mx-auto px-6 flex justify-between items-start">
           <div>
-            <p className="text-emerald-300 text-sm font-bold tracking-wider uppercase mb-1">{appUser?.role === 'admin' ? "Espace Administrateur" : "Espace Agent"}</p>
+            <div className="flex items-center gap-3 mb-1">
+              <p className="text-emerald-300 text-sm font-bold tracking-wider uppercase">{appUser?.role === 'admin' ? "Espace Administrateur" : "Espace Agent"}</p>
+              {isOffline && <span className="bg-amber-500 text-amber-950 text-[10px] font-black px-2 py-0.5 rounded-md flex items-center gap-1"><WifiOff size={12}/> HORS LIGNE</span>}
+            </div>
             <h1 className="text-3xl md:text-4xl font-black tracking-tight leading-tight">👋 Bonjour, <br className="md:hidden" />{coopProfile?.nom || "l'équipe"} !</h1>
             <p className="text-emerald-100/80 mt-2 font-medium max-w-md">Voici un coup d'œil sur la situation de vos membres et de vos finances aujourd'hui.</p>
           </div>
@@ -915,6 +966,7 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 </div>
 
+                {/* LISTE DES MEMBRES */}
                 {activeTab === 'members' && (
                   <div className="grid gap-4">
                     {filteredMembers.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Aucun producteur trouvé.</p> : null}
@@ -936,6 +988,7 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 )}
 
+                {/* LISTE DES RÉCOLTES ET VENTES */}
                 {activeTab === 'harvests' && (
                   <div className="grid gap-4">
                      {filteredHarvests.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Aucune récolte ou vente enregistrée.</p> : null}
@@ -955,6 +1008,7 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 )}
 
+                {/* LISTE DES STOCKS */}
                 {activeTab === 'stock' && (
                   <div className="grid gap-4">
                     {filteredStock.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Le magasin est vide.</p> : null}
@@ -974,6 +1028,7 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 )}
 
+                {/* LISTE DES COMMANDES */}
                 {activeTab === 'orders' && (
                   <div className="grid gap-4">
                     {filteredOrders.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Aucune dépense enregistrée.</p> : null}
@@ -994,8 +1049,6 @@ const CoopDashboard: React.FC = () => {
 
             {activeTab === 'settings' && (
               <div className="space-y-6">
-                
-                {/* NOUVEAU: Profil de la Coopérative (Visible pour Admin et Agents) */}
                 <div className="bg-white rounded-[2.5rem] p-8 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] border border-stone-100">
                   <div className="flex items-center gap-4 mb-6">
                     <div className="p-3 bg-emerald-50 rounded-2xl text-emerald-600"><Target size={28}/></div>
@@ -1039,7 +1092,7 @@ const CoopDashboard: React.FC = () => {
                     <div className="p-3 bg-stone-100 rounded-2xl text-stone-600"><Settings size={28}/></div>
                     <h2 className="text-2xl font-black text-stone-800 tracking-tight">Cultures & Rendements</h2>
                   </div>
-                  <p className="text-base font-medium text-stone-500 mb-8 max-w-xl">C'est ici que la magie opère. Définissez les cultures gérées par votre coopérative et estimez leurs rendements pour que l'outil puisse calculer vos prévisions financières annuelles.</p>
+                  <p className="text-base font-medium text-stone-500 mb-8 max-w-xl">Définissez les cultures gérées par votre coopérative et estimez leurs rendements pour que l'outil puisse calculer vos prévisions financières annuelles.</p>
                   
                   {appUser?.role === 'admin' ? (
                     <form onSubmit={addNewCrop} className="bg-stone-50 p-6 rounded-3xl border border-stone-100 flex flex-col md:flex-row gap-5 mb-8">
@@ -1072,14 +1125,18 @@ const CoopDashboard: React.FC = () => {
 
             {activeTab === 'map' && (
               <div className="bg-white rounded-[2.5rem] p-6 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] border border-stone-100 h-[650px] flex flex-col relative overflow-hidden">
-                <div className="flex items-center gap-3 mb-6 relative z-10">
-                  <div className="p-3 bg-blue-50 rounded-2xl text-blue-600"><MapIcon size={24}/></div>
-                  <h2 className="text-2xl font-black text-stone-800 tracking-tight">Cadastre des Producteurs</h2>
+                <div className="flex items-center justify-between mb-6 relative z-10">
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 bg-blue-50 rounded-2xl text-blue-600"><MapIcon size={24}/></div>
+                    <h2 className="text-2xl font-black text-stone-800 tracking-tight">Cadastre</h2>
+                  </div>
+                  {isOffline && <div className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-2 rounded-xl flex items-center gap-2"><WifiOff size={14}/> Carte HD bloquée en hors-ligne</div>}
                 </div>
                 
                 <div key={`map-container-${activeTab}`} className="flex-1 rounded-[2rem] overflow-hidden border-2 border-stone-100 z-0 relative shadow-inner">
                   {coopProfile && (
                     <MapContainer center={[coopProfile.lat, coopProfile.lng]} zoom={10} style={{ height: '100%', width: '100%' }}>
+                      {/* Affichage des tuiles uniquement si on est en ligne ou qu'on a le cache, mais le fallback Leaflet gère le vide automatiquement */}
                       <TileLayer url="https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}" maxZoom={20} subdomains={['mt0','mt1','mt2','mt3']} />
                       
                       <MapInvalidator />
@@ -1130,9 +1187,13 @@ const CoopDashboard: React.FC = () => {
               
               <h3 className="font-black text-blue-900 mb-6 flex items-center gap-3 text-lg"><CloudRain className="text-blue-500" size={24}/> La météo locale</h3>
               
-              {weatherError ? (
+              {isOffline ? (
+                <div className="bg-white/60 p-4 rounded-3xl backdrop-blur-sm border border-amber-100 text-amber-700 text-sm font-bold flex flex-col items-center text-center gap-2">
+                  <WifiOff size={24} className="text-amber-500"/> Météo indisponible hors ligne. Synchronisation à votre retour au bureau.
+                </div>
+              ) : weatherError ? (
                 <div className="bg-white/60 p-4 rounded-3xl backdrop-blur-sm border border-red-100 text-red-600 text-sm font-bold text-center">
-                  Impossible de charger la météo actuellement. Vérifiez votre connexion.
+                  Impossible de charger la météo actuellement.
                 </div>
               ) : weather ? (
                 <>
