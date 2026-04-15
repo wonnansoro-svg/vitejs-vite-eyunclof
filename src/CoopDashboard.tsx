@@ -5,7 +5,7 @@ import {
   Map as MapIcon, CloudRain, Sun, Trash2, LogOut, Lock, User,
   Package, ArrowDownToLine, ArrowUpFromLine, Check, 
   Play, Square, Undo, Navigation, MapPin, 
-  Settings, Banknote, Target, MapPin as MapPinDrop,
+  Settings, Target, MapPin as MapPinDrop,
   Wheat, Coins, Leaf, QrCode, Scan, Printer, KeyRound, AlertTriangle, Copy, WifiOff
 } from 'lucide-react';
 
@@ -615,7 +615,7 @@ const CoopDashboard: React.FC = () => {
           
           {isOffline && (
             <div className="bg-amber-100 text-amber-800 p-4 rounded-2xl mb-6 text-sm font-bold flex items-center gap-2">
-              <WifiOff size={20} className="shrink-0" /> Impossible de se connecter ou de créer un compte hors ligne. Rapprochez-vous d'une zone couverte.
+              <span title="Hors Ligne"><WifiOff size={20} className="shrink-0" /></span> Impossible de se connecter ou de créer un compte hors ligne. Rapprochez-vous d'une zone couverte.
             </div>
           )}
 
@@ -858,7 +858,7 @@ const CoopDashboard: React.FC = () => {
           <div>
             <div className="flex items-center gap-3 mb-1">
               <p className="text-emerald-300 text-sm font-bold tracking-wider uppercase">{appUser?.role === 'admin' ? "Espace Administrateur" : "Espace Agent"}</p>
-              {isOffline && <span className="bg-amber-500 text-amber-950 text-[10px] font-black px-2 py-0.5 rounded-md flex items-center gap-1"><WifiOff size={12}/> HORS LIGNE</span>}
+              {isOffline && <span className="bg-amber-500 text-amber-950 text-[10px] font-black px-2 py-0.5 rounded-md flex items-center gap-1"><span title="Hors Ligne"><WifiOff size={12}/></span> HORS LIGNE</span>}
             </div>
             <h1 className="text-3xl md:text-4xl font-black tracking-tight leading-tight">👋 Bonjour, <br className="md:hidden" />{coopProfile?.nom || "l'équipe"} !</h1>
             <p className="text-emerald-100/80 mt-2 font-medium max-w-md">Voici un coup d'œil sur la situation de vos membres et de vos finances aujourd'hui.</p>
@@ -1141,7 +1141,7 @@ const CoopDashboard: React.FC = () => {
                     <div className="p-3 bg-blue-50 rounded-2xl text-blue-600"><MapIcon size={24}/></div>
                     <h2 className="text-2xl font-black text-stone-800 tracking-tight">Cadastre</h2>
                   </div>
-                  {isOffline && <div className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-2 rounded-xl flex items-center gap-2"><WifiOff size={14}/> Carte HD bloquée en hors-ligne</div>}
+                  {isOffline && <div className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-2 rounded-xl flex items-center gap-2"><span title="Hors Ligne"><WifiOff size={14} /></span> Carte HD bloquée en hors-ligne</div>}
                 </div>
                 
                 <div key={`map-container-${activeTab}`} className="flex-1 rounded-[2rem] overflow-hidden border-2 border-stone-100 z-0 relative shadow-inner">
@@ -1191,10 +1191,7 @@ const CoopDashboard: React.FC = () => {
             )}
           </div>
 
-          {/* LA COLONNE DE DROITE (BARRE LATÉRALE) */}
           <div className="space-y-8 mt-4 lg:mt-0">
-            
-            {/* Widget Météo Complet avec Alertes 3 jours */}
             <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-8 rounded-[2.5rem] border border-blue-100 relative overflow-hidden shadow-sm">
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/40 rounded-full blur-2xl -translate-y-1/2 translate-x-1/4"></div>
               
@@ -1240,7 +1237,7 @@ const CoopDashboard: React.FC = () => {
               )}
             </div>
             
-            {/* NOUVEAU: Widget Cartographie (Remplace Prêts & Financements) */}
+            {/* Widget Cartographie */}
             <div className="bg-white rounded-[2.5rem] p-6 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] border border-stone-100 flex flex-col relative overflow-hidden h-[450px]">
               <div className="flex items-center justify-between mb-4 relative z-10">
                 <h3 className="font-black text-stone-800 flex items-center gap-2 text-lg"><MapIcon size={20} className="text-emerald-500"/> Aperçu des parcelles</h3>
