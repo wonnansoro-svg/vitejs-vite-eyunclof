@@ -6,7 +6,7 @@ import {
   Package, ArrowDownToLine, ArrowUpFromLine, Check, 
   Play, Square, Undo, Navigation, MapPin, 
   Settings, Banknote, Target, MapPin as MapPinDrop,
-  Wheat, Coins, Leaf, QrCode, Scan, Printer, KeyRound
+  Wheat, Coins, Leaf, QrCode, Scan, Printer, KeyRound, AlertTriangle
 } from 'lucide-react';
 
 import * as XLSX from 'xlsx';
@@ -102,6 +102,9 @@ interface Order { id: string; coopId: string; produit: string; qte: string; date
 interface StockTransaction { id: string; coopId: string; type: 'entree' | 'sortie'; produit: string; qte: string; date: string; cout: string; acteur: string; }
 interface Harvest { id: string; coopId: string; type: 'recolte' | 'vente'; culture: string; qte: number; date: string; montant?: number; acteur?: string; }
 
+interface WeatherAlert { date: string; prob: number; sum: number; }
+interface WeatherData { temp: number; isSunny: boolean; locationName: string; alerts: WeatherAlert[]; }
+
 // --- COMPOSANTS DE CARTE ---
 const AutoFitBounds = ({ members, defaultCenter }: { members: Member[], defaultCenter: Point }) => {
   const map = useMap();
@@ -154,7 +157,8 @@ const CoopDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'overview' | 'members' | 'orders' | 'stock' | 'harvests' | 'map' | 'settings'>('overview');
   const [showForm, setShowForm] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [weather, setWeather] = useState<{ temp: number, isSunny: boolean } | null>(null);
+  const [weather, setWeather] = useState<WeatherData | null>(null);
+  const [weatherError, setWeatherError] = useState(false);
 
   const [members, setMembers] = useState<Member[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -174,6 +178,8 @@ const CoopDashboard: React.FC = () => {
   const [scanData, setScanData] = useState('');
 
   const [newMember, setNewMember] = useState<Partial<Member>>({ nom: '', village: '', culture: '', surface: '', date: '', cout: '' });
+  const [isCustomCulture, setIsCustomCulture] = useState(false);
+
   const [newOrder, setNewOrder] = useState<Partial<Order>>({ produit: '', qte: '', date: '', cout: '' });
   const [newStock, setNewStock] = useState<Partial<StockTransaction>>({ type: 'entree', produit: '', qte: '', date: '', cout: '', acteur: '' });
   const [newCrop, setNewCrop] = useState<CropConfig>({ nom: '', rendementHa: 0, prixTonne: 0 });
@@ -210,10 +216,40 @@ const CoopDashboard: React.FC = () => {
             const currentProfile = { id: profileSnap.id, ...profileSnap.data() } as CoopProfile;
             setCoopProfile(currentProfile);
 
-            fetch(`https://api.open-meteo.com/v1/forecast?latitude=${currentProfile.lat}&longitude=${currentProfile.lng}&current_weather=true`)
-              .then(res => res.json())
-              .then(data => setWeather({ temp: data.current_weather.temperature, isSunny: data.current_weather.weathercode < 3 }))
-              .catch(err => console.error("Erreur météo", err));
+            // Fetch Advanced Weather & Alerts
+            try {
+              const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${currentProfile.lat}&longitude=${currentProfile.lng}&current_weather=true&daily=precipitation_probability,precipitation_sum&timezone=Africa%2FAbidjan&forecast_days=3`);
+              const wData = await weatherRes.json();
+
+              // Fetch Reverse Geocoding (Location Name)
+              let locName = "Localité";
+              try {
+                const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${currentProfile.lat}&lon=${currentProfile.lng}`);
+                const geoData = await geoRes.json();
+                if (geoData && geoData.address) {
+                  locName = geoData.address.city || geoData.address.town || geoData.address.village || geoData.address.county || geoData.address.state || "Côte d'Ivoire";
+                }
+              } catch(e) {
+                 console.warn("Erreur géocodage inversé.");
+              }
+
+              const alerts = wData.daily.time.map((t: string, i: number) => ({
+                date: t,
+                prob: wData.daily.precipitation_probability[i] || 0,
+                sum: wData.daily.precipitation_sum[i] || 0
+              }));
+
+              setWeather({
+                temp: wData.current_weather.temperature,
+                isSunny: wData.current_weather.weathercode <= 3,
+                locationName: locName,
+                alerts
+              });
+              setWeatherError(false);
+            } catch(e) {
+               console.error("Erreur API Météo", e);
+               setWeatherError(true);
+            }
           }
 
           const qMembres = query(collection(db, "membres"), where("coopId", "==", appUser.coopId));
@@ -246,7 +282,7 @@ const CoopDashboard: React.FC = () => {
     let totalRevenu = 0;
     members.forEach(m => {
       const surface = parseFloat(m.surface || '0');
-      const cropConfig = coopProfile.cultures.find(c => c.nom === m.culture);
+      const cropConfig = coopProfile.cultures.find(c => c.nom.toLowerCase() === m.culture?.toLowerCase());
       if (cropConfig && surface > 0) {
         const prod = surface * cropConfig.rendementHa;
         totalRendement += prod;
@@ -267,13 +303,22 @@ const CoopDashboard: React.FC = () => {
         const userCred = await createUserWithEmailAndPassword(auth, credentials.email, credentials.password);
         const newCoopId = "COOP-" + Math.random().toString(36).substr(2, 9).toUpperCase();
         
+        // Cultures par défaut adaptées à la Côte d'Ivoire
         await setDoc(doc(db, "cooperatives", newCoopId), {
           nom: registerData.nomCoop || "Ma Coopérative",
           lat: registerData.lat,
           lng: registerData.lng,
           cultures: [
             { nom: "Cacao", rendementHa: 0.5, prixTonne: 1500000 },
-            { nom: "Anacarde", rendementHa: 0.8, prixTonne: 400000 }
+            { nom: "Anacarde", rendementHa: 0.8, prixTonne: 400000 },
+            { nom: "Hévéa", rendementHa: 1.5, prixTonne: 300000 },
+            { nom: "Café", rendementHa: 0.4, prixTonne: 1200000 },
+            { nom: "Coton", rendementHa: 1.2, prixTonne: 300000 },
+            { nom: "Palmier à huile", rendementHa: 10, prixTonne: 50000 },
+            { nom: "Maïs", rendementHa: 2, prixTonne: 150000 },
+            { nom: "Riz", rendementHa: 3, prixTonne: 300000 },
+            { nom: "Manioc", rendementHa: 15, prixTonne: 25000 },
+            { nom: "Igname", rendementHa: 10, prixTonne: 200000 }
           ] 
         });
         
@@ -402,6 +447,7 @@ const CoopDashboard: React.FC = () => {
 
   const startWizard = () => {
     setParcelPoints([]);
+    setIsCustomCulture(false);
     setNewMember({ 
       nom: '', village: '', 
       culture: coopProfile?.cultures.length ? coopProfile.cultures[0].nom : '', 
@@ -456,7 +502,6 @@ const CoopDashboard: React.FC = () => {
   
   const deleteDocGen = async <T extends { id: string }>(collectionName: string, id: string, setter: React.Dispatch<React.SetStateAction<T[]>>, state: T[]) => { if(window.confirm("Supprimer définitivement ?")) { try { await deleteDoc(doc(db, collectionName, id)); setter(state.filter(item => item.id !== id)); } catch (err) { console.error(err); alert("Erreur."); } } };
 
-  // LA CORRECTION DES EXPORTS EST ICI
   const exportToExcel = () => {
     let dataToExport;
     let fileName = 'Export.xlsx';
@@ -659,13 +704,34 @@ const CoopDashboard: React.FC = () => {
               <label htmlFor="village" className="text-sm font-bold text-stone-500 px-2">Dans quel campement/village ?</label>
               <input id="village" required placeholder="Son village..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-lg text-stone-800" value={newMember.village} onChange={e => setNewMember({...newMember, village: e.target.value})} />
             </div>
+            
             <div className="space-y-2">
-              <label htmlFor="cultureSelection" className="text-sm font-bold text-stone-500 px-2">Quelle est sa culture principale ?</label>
-              <select id="cultureSelection" required className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-lg text-stone-800" value={newMember.culture} onChange={e => setNewMember({...newMember, culture: e.target.value})}>
+              <label aria-label="Sélection culture" className="text-sm font-bold text-stone-500 px-2">Quelle est sa culture principale ?</label>
+              <select required className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-lg text-stone-800" 
+                value={isCustomCulture ? 'autre' : newMember.culture} 
+                onChange={e => {
+                  if (e.target.value === 'autre') {
+                    setIsCustomCulture(true);
+                    setNewMember({...newMember, culture: ''});
+                  } else {
+                    setIsCustomCulture(false);
+                    setNewMember({...newMember, culture: e.target.value});
+                  }
+                }}>
                 <option value="" disabled>Choisir dans la liste...</option>
                 {coopProfile?.cultures.map((c, idx) => (<option key={idx} value={c.nom}>{c.nom}</option>))}
+                <option value="autre" className="font-bold text-emerald-700">➕ Autre (Préciser...)</option>
               </select>
             </div>
+
+            {isCustomCulture && (
+              <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
+                <label className="text-sm font-bold text-emerald-600 px-2">Précisez la culture</label>
+                <input required placeholder="Ex: Cacao, Tomate, etc." className="w-full p-4 bg-emerald-50/50 rounded-2xl border border-emerald-200 focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-bold text-lg text-emerald-900" value={newMember.culture} onChange={e => setNewMember({...newMember, culture: e.target.value})} />
+                <p className="text-xs font-medium text-amber-600 px-2 flex items-center gap-1 mt-1"><AlertTriangle size={12}/> Pensez à ajouter cette culture dans "Paramètres" plus tard pour vos calculs financiers.</p>
+              </div>
+            )}
+
             <button type="submit" className="w-full h-16 bg-[#1b4332] text-white rounded-2xl font-black text-lg shadow-lg mt-8 hover:shadow-xl hover:-translate-y-0.5 transition-all">Enregistrer ce profil</button>
           </form>
         </div>
@@ -721,7 +787,7 @@ const CoopDashboard: React.FC = () => {
             <p className="text-stone-500 text-sm font-medium mb-8 leading-relaxed">Placez le curseur dans le champ ci-dessous et utilisez votre douchette QR USB.</p>
             
             <form onSubmit={handleScanSubmit}>
-              <input type="text" autoFocus required placeholder="En attente du scanner..." className="w-full p-4 bg-stone-100 rounded-2xl border-2 border-emerald-500 focus:outline-none focus:ring-4 focus:ring-emerald-500/20 text-center font-mono font-bold text-stone-800 mb-6 transition-all" value={scanData} onChange={e => setScanData(e.target.value)} />
+              <input type="text" autoFocus required aria-label="Code scanné" placeholder="En attente du scanner..." className="w-full p-4 bg-stone-100 rounded-2xl border-2 border-emerald-500 focus:outline-none focus:ring-4 focus:ring-emerald-500/20 text-center font-mono font-bold text-stone-800 mb-6 transition-all" value={scanData} onChange={e => setScanData(e.target.value)} />
               <div className="flex gap-2">
                 <button type="button" onClick={() => setShowScanner(false)} className="flex-1 bg-stone-100 text-stone-600 py-4 rounded-xl font-bold">Annuler</button>
                 <button type="submit" className="flex-1 bg-emerald-600 text-white py-4 rounded-xl font-bold">Chercher</button>
@@ -874,7 +940,7 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 )}
 
-                {/* LISTE DES RÉCOLTES ET VENTES */}
+                {/* AUTRES LISTES (Identiques) */}
                 {activeTab === 'harvests' && (
                   <div className="grid gap-4">
                      {filteredHarvests.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Aucune récolte ou vente enregistrée.</p> : null}
@@ -894,7 +960,6 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 )}
 
-                {/* LISTE DES STOCKS */}
                 {activeTab === 'stock' && (
                   <div className="grid gap-4">
                     {filteredStock.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Le magasin est vide.</p> : null}
@@ -914,7 +979,6 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 )}
 
-                {/* LISTE DES COMMANDES */}
                 {activeTab === 'orders' && (
                   <div className="grid gap-4">
                     {filteredOrders.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Aucune dépense enregistrée.</p> : null}
@@ -1038,21 +1102,47 @@ const CoopDashboard: React.FC = () => {
           </div>
 
           <div className="space-y-8 mt-4 lg:mt-0">
+            {/* Widget Météo Complet avec Alertes 3 jours */}
             <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-8 rounded-[2.5rem] border border-blue-100 relative overflow-hidden shadow-sm">
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/40 rounded-full blur-2xl -translate-y-1/2 translate-x-1/4"></div>
-              <h3 className="font-black text-blue-900 mb-6 flex items-center gap-3 text-lg"><CloudRain className="text-blue-500" size={24}/> La météo au siège</h3>
-              {weather ? (
-                <div className="flex items-center justify-between relative z-10">
-                  <div>
-                    <p className="text-5xl font-black text-blue-950 tracking-tighter">{weather.temp}°<span className="text-3xl text-blue-800/60">C</span></p>
-                    <p className="text-sm font-bold text-blue-600 uppercase mt-2 tracking-wider">{coopProfile?.nom}</p>
-                  </div>
-                  <div className="bg-white/60 p-4 rounded-3xl backdrop-blur-sm shadow-sm border border-white">
-                    {weather.isSunny ? <Sun size={56} strokeWidth={1.5} className="text-amber-500" /> : <CloudRain size={56} strokeWidth={1.5} className="text-blue-400" />}
-                  </div>
+              
+              <h3 className="font-black text-blue-900 mb-6 flex items-center gap-3 text-lg"><CloudRain className="text-blue-500" size={24}/> La météo locale</h3>
+              
+              {weatherError ? (
+                <div className="bg-white/60 p-4 rounded-3xl backdrop-blur-sm border border-red-100 text-red-600 text-sm font-bold text-center">
+                  Impossible de charger la météo actuellement. Vérifiez votre connexion.
                 </div>
-              ) : (<p className="text-sm font-medium text-blue-600 animate-pulse">Observation du ciel en cours...</p>)}
-              <p className="text-[11px] font-bold text-blue-400/80 uppercase tracking-widest mt-6">COORD. {coopProfile?.lat?.toFixed(4)}, {coopProfile?.lng?.toFixed(4)}</p>
+              ) : weather ? (
+                <>
+                  <div className="flex items-center justify-between relative z-10 mb-6">
+                    <div>
+                      <p className="text-5xl font-black text-blue-950 tracking-tighter">{weather.temp}°<span className="text-3xl text-blue-800/60">C</span></p>
+                      <p className="text-sm font-bold text-blue-600 uppercase mt-2 tracking-wider line-clamp-2" title={weather.locationName}>{weather.locationName}</p>
+                    </div>
+                    <div className="bg-white/60 p-4 rounded-3xl backdrop-blur-sm shadow-sm border border-white">
+                      {weather.isSunny ? <Sun size={56} strokeWidth={1.5} className="text-amber-500" /> : <CloudRain size={56} strokeWidth={1.5} className="text-blue-400" />}
+                    </div>
+                  </div>
+
+                  {/* Bloc 3 Jours d'alertes pluie */}
+                  <div className="pt-5 border-t border-blue-200/50">
+                    <p className="text-xs font-bold text-blue-800 mb-3 uppercase tracking-wider flex items-center gap-2"><AlertTriangle size={14} className="text-amber-500"/> Alertes Pluie (3 jours)</p>
+                    <div className="space-y-2">
+                      {weather.alerts.map((a, i) => (
+                        <div key={i} className="flex justify-between items-center bg-white/40 px-3 py-2.5 rounded-xl text-sm font-medium text-blue-900 border border-white/50">
+                          <span className="capitalize">{new Date(a.date).toLocaleDateString('fr-FR', {weekday: 'short', day: 'numeric'})}</span>
+                          <div className="flex items-center gap-3">
+                            <span className="flex items-center gap-1 font-bold text-blue-700">{a.prob}% <CloudRain size={12} className="opacity-70"/></span>
+                            <span className="text-xs text-blue-500/80 bg-white/50 px-2 py-0.5 rounded-md min-w-[50px] text-center">{a.sum} mm</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm font-medium text-blue-600 animate-pulse text-center py-4">Observation du ciel en cours...</p>
+              )}
             </div>
             
             <div className="bg-stone-800 p-8 rounded-[2.5rem] text-stone-300 relative overflow-hidden shadow-xl shadow-stone-900/10">
@@ -1083,23 +1173,23 @@ const CoopDashboard: React.FC = () => {
                   <button type="button" onClick={() => setNewHarvest({...newHarvest, type: 'vente'})} className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all ${newHarvest.type === 'vente' ? 'bg-white text-amber-600 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}>💰 J'ai vendu</button>
                 </div>
 
-                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Date de l'opération</label><input required type="date" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-amber-500 font-medium text-stone-800" value={newHarvest.date} onChange={e => setNewHarvest({...newHarvest, date: e.target.value})} /></div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Date de l'opération</label><input required aria-label="Date de l'opération" type="date" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-amber-500 font-medium text-stone-800" value={newHarvest.date} onChange={e => setNewHarvest({...newHarvest, date: e.target.value})} /></div>
                 
                 <div className="space-y-2">
                   <label className="text-sm font-bold text-stone-500 px-2">Quelle culture ?</label>
-                  <select required className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-amber-500 font-medium text-stone-800" value={newHarvest.culture} onChange={e => setNewHarvest({...newHarvest, culture: e.target.value})}>
+                  <select required aria-label="Sélectionner la culture" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-amber-500 font-medium text-stone-800" value={newHarvest.culture} onChange={e => setNewHarvest({...newHarvest, culture: e.target.value})}>
                     <option value="" disabled>Choisir dans la liste...</option>
                     {coopProfile?.cultures.map((c, idx) => <option key={idx} value={c.nom}>{c.nom}</option>)}
                   </select>
                 </div>
                 
-                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Volume (en Tonnes)</label><input required type="number" step="0.1" placeholder="Ex: 12.5" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-amber-500 font-medium text-stone-800" value={newHarvest.qte || ''} onChange={e => setNewHarvest({...newHarvest, qte: parseFloat(e.target.value)})} /></div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Volume (en Tonnes)</label><input required aria-label="Volume en tonnes" type="number" step="0.1" placeholder="Ex: 12.5" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-amber-500 font-medium text-stone-800" value={newHarvest.qte || ''} onChange={e => setNewHarvest({...newHarvest, qte: parseFloat(e.target.value)})} /></div>
                 
                 {newHarvest.type === 'vente' && (
-                  <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Montant total reçu (FCFA)</label><input required type="number" placeholder="Ex: 1500000" className="w-full p-4 bg-amber-50 rounded-2xl border-none focus:ring-2 focus:ring-amber-500 font-bold text-amber-900" value={newHarvest.montant || ''} onChange={e => setNewHarvest({...newHarvest, montant: parseFloat(e.target.value)})} /></div>
+                  <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Montant total reçu (FCFA)</label><input required aria-label="Montant en FCFA" type="number" placeholder="Ex: 1500000" className="w-full p-4 bg-amber-50 rounded-2xl border-none focus:ring-2 focus:ring-amber-500 font-bold text-amber-900" value={newHarvest.montant || ''} onChange={e => setNewHarvest({...newHarvest, montant: parseFloat(e.target.value)})} /></div>
                 )}
                 
-                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">{newHarvest.type === 'recolte' ? "Quel producteur ? (Optionnel)" : "Qui est l'acheteur ? (Optionnel)"}</label><input placeholder="Nom..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-amber-500 font-medium text-stone-800" value={newHarvest.acteur} onChange={e => setNewHarvest({...newHarvest, acteur: e.target.value})} /></div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">{newHarvest.type === 'recolte' ? "Quel producteur ? (Optionnel)" : "Qui est l'acheteur ? (Optionnel)"}</label><input aria-label="Nom de l'acteur" placeholder="Nom..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-amber-500 font-medium text-stone-800" value={newHarvest.acteur} onChange={e => setNewHarvest({...newHarvest, acteur: e.target.value})} /></div>
                 
                 <button type="submit" className="w-full bg-amber-500 text-white py-5 rounded-2xl font-black text-lg shadow-lg hover:shadow-xl hover:-translate-y-0.5 mt-4 transition-all">Valider l'opération</button>
               </form>
@@ -1107,10 +1197,10 @@ const CoopDashboard: React.FC = () => {
 
             {activeTab === 'orders' && (
               <form onSubmit={addOrder} className="space-y-5">
-                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Date de l'achat</label><input required type="date" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-[#1b4332] font-medium" value={newOrder.date} onChange={e => setNewOrder({...newOrder, date: e.target.value})} /></div>
-                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Qu'avez-vous acheté ?</label><input required placeholder="Ex: Engrais NPK..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-[#1b4332] font-medium" value={newOrder.produit} onChange={e => setNewOrder({...newOrder, produit: e.target.value})} /></div>
-                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Combien ?</label><input required placeholder="Ex: 50 sacs" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-[#1b4332] font-medium" value={newOrder.qte} onChange={e => setNewOrder({...newOrder, qte: e.target.value})} /></div>
-                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Combien ça a coûté ? (FCFA)</label><input required type="number" placeholder="Montant total..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-[#1b4332] font-medium" value={newOrder.cout} onChange={e => setNewOrder({...newOrder, cout: e.target.value})} /></div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Date de l'achat</label><input required aria-label="Date" type="date" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-[#1b4332] font-medium" value={newOrder.date} onChange={e => setNewOrder({...newOrder, date: e.target.value})} /></div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Qu'avez-vous acheté ?</label><input required aria-label="Produit" placeholder="Ex: Engrais NPK..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-[#1b4332] font-medium" value={newOrder.produit} onChange={e => setNewOrder({...newOrder, produit: e.target.value})} /></div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Combien ?</label><input required aria-label="Quantité" placeholder="Ex: 50 sacs" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-[#1b4332] font-medium" value={newOrder.qte} onChange={e => setNewOrder({...newOrder, qte: e.target.value})} /></div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Combien ça a coûté ? (FCFA)</label><input required aria-label="Montant en FCFA" type="number" placeholder="Montant total..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-[#1b4332] font-medium" value={newOrder.cout} onChange={e => setNewOrder({...newOrder, cout: e.target.value})} /></div>
                 <button type="submit" className="w-full bg-[#1b4332] text-white py-5 rounded-2xl font-black text-lg shadow-lg hover:shadow-xl hover:-translate-y-0.5 mt-4 transition-all">Enregistrer la dépense</button>
               </form>
             )}
@@ -1119,16 +1209,16 @@ const CoopDashboard: React.FC = () => {
               <form onSubmit={addStockTransaction} className="space-y-5">
                 <div className="space-y-2">
                   <label className="text-sm font-bold text-stone-500 px-2">Que se passe-t-il ?</label>
-                  <select required className="w-full p-4 bg-purple-50 rounded-2xl border-none focus:ring-2 focus:ring-purple-500 font-bold text-purple-900" value={newStock.type} onChange={e => setNewStock({...newStock, type: e.target.value as 'entree'|'sortie'})}>
+                  <select required aria-label="Type d'opération" className="w-full p-4 bg-purple-50 rounded-2xl border-none focus:ring-2 focus:ring-purple-500 font-bold text-purple-900" value={newStock.type} onChange={e => setNewStock({...newStock, type: e.target.value as 'entree'|'sortie'})}>
                     <option value="entree">📥 Ça rentre dans le magasin</option>
                     <option value="sortie">📤 Ça sort du magasin</option>
                   </select>
                 </div>
-                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Aujourd'hui, le :</label><input required type="date" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-purple-500 font-medium" value={newStock.date} onChange={e => setNewStock({...newStock, date: e.target.value})} /></div>
-                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Quoi exactement ?</label><input required placeholder="Nom de l'article" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-purple-500 font-medium" value={newStock.produit} onChange={e => setNewStock({...newStock, produit: e.target.value})} /></div>
-                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Combien ?</label><input required placeholder="Ex: 10 Bidons" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-purple-500 font-medium" value={newStock.qte} onChange={e => setNewStock({...newStock, qte: e.target.value})} /></div>
-                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Valeur de la marchandise (FCFA)</label><input required type="number" placeholder="Valeur estimée..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-purple-500 font-medium" value={newStock.cout} onChange={e => setNewStock({...newStock, cout: e.target.value})} /></div>
-                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">{newStock.type === 'entree' ? "Fourni par qui ?" : "Donné à qui ?"}</label><input required placeholder="Nom de la personne" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-purple-500 font-medium" value={newStock.acteur} onChange={e => setNewStock({...newStock, acteur: e.target.value})} /></div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Aujourd'hui, le :</label><input required aria-label="Date" type="date" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-purple-500 font-medium" value={newStock.date} onChange={e => setNewStock({...newStock, date: e.target.value})} /></div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Quoi exactement ?</label><input required aria-label="Produit" placeholder="Nom de l'article" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-purple-500 font-medium" value={newStock.produit} onChange={e => setNewStock({...newStock, produit: e.target.value})} /></div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Combien ?</label><input required aria-label="Quantité" placeholder="Ex: 10 Bidons" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-purple-500 font-medium" value={newStock.qte} onChange={e => setNewStock({...newStock, qte: e.target.value})} /></div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">Valeur de la marchandise (FCFA)</label><input required aria-label="Montant en FCFA" type="number" placeholder="Valeur estimée..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-purple-500 font-medium" value={newStock.cout} onChange={e => setNewStock({...newStock, cout: e.target.value})} /></div>
+                <div className="space-y-2"><label className="text-sm font-bold text-stone-500 px-2">{newStock.type === 'entree' ? "Fourni par qui ?" : "Donné à qui ?"}</label><input required aria-label="Nom de la personne liée" placeholder="Nom de la personne" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-purple-500 font-medium" value={newStock.acteur} onChange={e => setNewStock({...newStock, acteur: e.target.value})} /></div>
                 <button type="submit" className="w-full bg-purple-600 text-white py-5 rounded-2xl font-black text-lg shadow-lg hover:shadow-xl hover:-translate-y-0.5 mt-4 transition-all">Mettre à jour le stock</button>
               </form>
             )}
@@ -1136,10 +1226,12 @@ const CoopDashboard: React.FC = () => {
         </div>
       )}
 
+      {/* BOUTON FLOTTANT ACTION RAPIDE */}
       <button aria-label="Tracer une parcelle" onClick={startWizard} className="fixed bottom-24 right-6 md:bottom-10 md:right-10 bg-emerald-500 text-white w-16 h-16 rounded-[1.2rem] shadow-[0_15px_30px_rgba(16,185,129,0.4)] flex items-center justify-center hover:bg-emerald-400 transition-all hover:scale-110 active:scale-95 z-[90] border-2 border-emerald-400 rotate-3 hover:rotate-0">
         <MapPin size={28} />
       </button>
 
+      {/* NAVIGATION MOBILE - Fond Flouté organique */}
       <div className="md:hidden fixed bottom-0 w-full bg-white/90 backdrop-blur-xl border-t border-stone-100 flex items-center justify-around py-3 px-2 z-[80] shadow-[0_-15px_40px_rgba(0,0,0,0.05)] overflow-x-auto pb-safe">
         <button onClick={() => setActiveTab('overview')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'overview' ? 'text-[#1b4332]' : 'text-stone-400'}`}><TrendingUp size={22} /><span className="text-[10px] font-bold mt-1.5">Résumé</span></button>
         <button onClick={() => setActiveTab('members')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'members' ? 'text-[#1b4332]' : 'text-stone-400'}`}><Users size={22} /><span className="text-[10px] font-bold mt-1.5">Paysans</span></button>
