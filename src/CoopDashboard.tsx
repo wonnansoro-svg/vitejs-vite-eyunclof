@@ -1191,7 +1191,10 @@ const CoopDashboard: React.FC = () => {
             )}
           </div>
 
+          {/* LA COLONNE DE DROITE (BARRE LATÉRALE) */}
           <div className="space-y-8 mt-4 lg:mt-0">
+            
+            {/* Widget Météo Complet avec Alertes 3 jours */}
             <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-8 rounded-[2.5rem] border border-blue-100 relative overflow-hidden shadow-sm">
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/40 rounded-full blur-2xl -translate-y-1/2 translate-x-1/4"></div>
               
@@ -1237,13 +1240,52 @@ const CoopDashboard: React.FC = () => {
               )}
             </div>
             
-            <div className="bg-stone-800 p-8 rounded-[2.5rem] text-stone-300 relative overflow-hidden shadow-xl shadow-stone-900/10">
-               <div className="absolute -bottom-10 -right-10 opacity-10"><Banknote size={150} /></div>
-               <h3 className="font-black text-white mb-4 flex items-center gap-3 text-lg"><Banknote size={24} className="text-emerald-400"/> Prêts & Financements</h3>
-               <p className="text-sm leading-relaxed font-medium">
-                 Vos données ont de la valeur. Le tableau de bord principal (Résumé) génère des indicateurs précis que vous pouvez exporter en PDF pour prouver la rentabilité de votre coopérative aux banques et investisseurs.
-               </p>
+            {/* NOUVEAU: Widget Cartographie (Remplace Prêts & Financements) */}
+            <div className="bg-white rounded-[2.5rem] p-6 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] border border-stone-100 flex flex-col relative overflow-hidden h-[450px]">
+              <div className="flex items-center justify-between mb-4 relative z-10">
+                <h3 className="font-black text-stone-800 flex items-center gap-2 text-lg"><MapIcon size={20} className="text-emerald-500"/> Aperçu des parcelles</h3>
+                {isOffline && <span title="Hors Ligne"><WifiOff size={14} className="text-amber-500" /></span>}
+              </div>
+              <div className="flex-1 rounded-[1.5rem] overflow-hidden border border-stone-100 z-0 relative shadow-inner">
+                {coopProfile && (
+                  <MapContainer center={[coopProfile.lat, coopProfile.lng]} zoom={10} style={{ height: '100%', width: '100%' }}>
+                    <TileLayer url="https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}" maxZoom={20} subdomains={['mt0','mt1','mt2','mt3']} />
+                    <MapInvalidator />
+                    <AutoFitBounds members={members} defaultCenter={{lat: coopProfile.lat, lng: coopProfile.lng}} />
+                    {members.map((m) => (
+                      <React.Fragment key={`mini-${m.id}`}>
+                        {m.parcelle && m.parcelle.length > 0 ? (
+                          <Polygon positions={m.parcelle.map(p => [p.lat, p.lng])} pathOptions={{ color: '#10b981', fillColor: '#34d399', fillOpacity: 0.5 }}>
+                            <Tooltip permanent direction="center" className="bg-white/95 border-none rounded-xl px-2 py-1 shadow-lg text-[10px] font-bold text-[#1b4332] text-center backdrop-blur-sm">{m.nom}</Tooltip>
+                            <Popup>
+                              <div className="text-sm min-w-[150px] p-1 font-sans">
+                                <strong className="text-lg font-black text-stone-800 block mb-1">{m.nom}</strong>
+                                <p className="text-stone-600 font-medium mb-1">{m.village} • {m.culture}</p>
+                                <p className="text-emerald-600 font-bold bg-emerald-50 px-2 py-1 rounded-md inline-block">{m.surface} ha</p>
+                              </div>
+                            </Popup>
+                          </Polygon>
+                        ) : (
+                          m.gps && (
+                            <Marker position={[m.gps.lat, m.gps.lng]} icon={userLocationIcon}>
+                              <Tooltip permanent direction="top" offset={[0, -20]} className="bg-white/95 border-none rounded-xl px-2 py-1 shadow-lg text-[10px] font-bold text-blue-800 text-center backdrop-blur-sm">{m.nom}</Tooltip>
+                              <Popup>
+                                <div className="text-sm min-w-[150px] p-1 font-sans">
+                                  <strong className="text-lg font-black text-stone-800 block mb-1">{m.nom}</strong>
+                                  <p className="text-stone-600 font-medium">{m.village} • {m.culture}</p>
+                                </div>
+                              </Popup>
+                            </Marker>
+                          )
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </MapContainer>
+                )}
+              </div>
+              <p className="text-xs text-stone-400 font-medium text-center mt-3">Toutes les parcelles enregistrées de la coopérative.</p>
             </div>
+            
           </div>
         </div>
       </div>
