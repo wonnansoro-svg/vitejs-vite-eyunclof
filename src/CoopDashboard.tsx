@@ -44,7 +44,6 @@ const vertexIcon = new L.Icon({
 
 // --- CONFIGURATION FIREBASE ---
 import { initializeApp } from 'firebase/app';
-// CORRECTION : Retrait de getDocs car nous utilisons désormais onSnapshot
 import { getFirestore, collection, addDoc, deleteDoc, doc, setDoc, getDoc, updateDoc, query, where, enableIndexedDbPersistence, onSnapshot } from 'firebase/firestore';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 
@@ -61,10 +60,10 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
 
-// ACTIVATION DU MODE HORS LIGNE (PERSISTANCE ROBUSTE)
+// ACTIVATION DU MODE HORS LIGNE
 enableIndexedDbPersistence(db).catch((err) => {
-  if (err.code === 'failed-precondition') console.warn("Multiples onglets ouverts. La persistance hors-ligne ne fonctionne que sur un onglet.");
-  else if (err.code === 'unimplemented') console.warn("Persistance non supportée par ce navigateur.");
+  if (err.code === 'failed-precondition') console.warn("Multiples onglets ouverts.");
+  else if (err.code === 'unimplemented') console.warn("Persistance non supportée.");
 });
 
 // --- TYPES ---
@@ -97,7 +96,6 @@ interface Member {
   nom: string;
   village: string;
   culture: string;
-  sousCulture?: string; 
   surface: string;
   statut: string;
   date: string; 
@@ -151,19 +149,16 @@ const MapInvalidator = () => {
   return null;
 };
 
-// --- MOTEUR DE PRESCRIPTION AGRONOMIQUE ---
-const getAgronomicAdvice = (culture: string | undefined, sousCulture: string | undefined, surfaceHa: number) => {
+// --- MOTEUR DE PRESCRIPTION AGRONOMIQUE (PHASE PILOTE) ---
+const getAgronomicAdvice = (culture: string | undefined, surfaceHa: number) => {
   const s = surfaceHa || 0;
   const cult = (culture || '').toLowerCase();
   
-  if (cult.includes('riz')) {
-    if (sousCulture === 'Irrigué') return { semence: s*60, npk: s*250, uree: s*150 };
-    if (sousCulture === 'Bas-fond') return { semence: s*50, npk: s*200, uree: s*100 };
-    return { semence: s*40, npk: s*150, uree: s*50 }; 
-  }
-  if (cult.includes('maïs')) return { semence: s*20, npk: s*150, uree: s*100 };
+  if (cult.includes('irrigué')) return { semence: s*60, npk: s*250, uree: s*150 };
+  if (cult.includes('bas-fond')) return { semence: s*50, npk: s*200, uree: s*100 };
+  if (cult.includes('pluvial') || cult.includes('riz')) return { semence: s*40, npk: s*150, uree: s*50 }; 
+  if (cult.includes('maïs') || cult.includes('mais')) return { semence: s*20, npk: s*150, uree: s*100 };
   if (cult.includes('coton')) return { semence: s*15, npk: s*200, uree: s*50 };
-  if (cult.includes('cacao')) return { semence: 0, npk: s*150, uree: 0 };
   
   return null;
 };
@@ -218,7 +213,7 @@ const CoopDashboard: React.FC = () => {
   const [showScanner, setShowScanner] = useState(false);
   const [scanData, setScanData] = useState('');
 
-  const [newMember, setNewMember] = useState<Partial<Member>>({ nom: '', village: '', culture: '', sousCulture: '', surface: '', date: '', cout: '' });
+  const [newMember, setNewMember] = useState<Partial<Member>>({ nom: '', village: '', culture: '', surface: '', date: '', cout: '' });
   const [isCustomCulture, setIsCustomCulture] = useState(false);
 
   const [newOrder, setNewOrder] = useState<Partial<Order>>({ produit: '', qte: '', date: '', cout: '' });
@@ -230,7 +225,7 @@ const CoopDashboard: React.FC = () => {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
-        setAppUser({ uid: user.uid, email: user.email || '', role: 'agent', coopId: '' }); // Profil temporaire écrasé par onSnapshot
+        setAppUser({ uid: user.uid, email: user.email || '', role: 'agent', coopId: '' });
         setIsLoggedIn(true);
       } else {
         setIsLoggedIn(false);
@@ -356,11 +351,18 @@ const CoopDashboard: React.FC = () => {
         const userCred = await createUserWithEmailAndPassword(auth, credentials.email, credentials.password);
         const newCoopId = "COOP-" + Math.random().toString(36).substr(2, 9).toUpperCase();
         
+        // CONFIGURATION PHASE PILOTE : Les 5 cultures par défaut
         await setDoc(doc(db, "cooperatives", newCoopId), {
           nom: registerData.nomCoop || "Ma Coopérative",
           lat: registerData.lat,
           lng: registerData.lng,
-          cultures: [] 
+          cultures: [
+            { nom: "Riz Pluvial", rendementHa: 2.0, prixTonne: 300000 },
+            { nom: "Riz de Bas-fond", rendementHa: 3.5, prixTonne: 300000 },
+            { nom: "Riz Irrigué", rendementHa: 5.0, prixTonne: 300000 },
+            { nom: "Coton", rendementHa: 1.2, prixTonne: 300000 },
+            { nom: "Maïs", rendementHa: 2.5, prixTonne: 150000 }
+          ] 
         });
         
         await setDoc(doc(db, "users", userCred.user.uid), { uid: userCred.user.uid, email: credentials.email, role: 'admin', coopId: newCoopId });
@@ -473,7 +475,6 @@ const CoopDashboard: React.FC = () => {
     setNewMember({ 
       nom: '', village: '', 
       culture: defaultCulture, 
-      sousCulture: '',
       surface: '', date: new Date().toISOString().split('T')[0], cout: '5000' 
     });
     initialCenterDone.current = false;
@@ -519,7 +520,7 @@ const CoopDashboard: React.FC = () => {
     let fileName = 'Export.xlsx';
 
     if (activeTab === 'members') {
-      dataToExport = members.map(m => ({ Nom: m.nom, Village: m.village, Culture: m.culture + (m.sousCulture ? ` (${m.sousCulture})` : ''), Surface: `${m.surface} ha`, Date: m.date, Frais: `${m.cout} FCFA`, Statut: m.statut }));
+      dataToExport = members.map(m => ({ Nom: m.nom, Village: m.village, Culture: m.culture, Surface: `${m.surface} ha`, Date: m.date, Frais: `${m.cout} FCFA`, Statut: m.statut }));
       fileName = 'Liste_Membres.xlsx';
     } else if (activeTab === 'orders') {
       dataToExport = orders.map(o => ({ Produit: o.produit, Quantite: o.qte, Date: o.date, Cout: `${o.cout} FCFA`, Statut: o.statut }));
@@ -546,7 +547,7 @@ const CoopDashboard: React.FC = () => {
       if (activeTab === 'members') {
         title = 'ANNUAIRE DES PAYSANS'; fileName = 'Rapport_Membres.pdf';
         tableHeaders = [["Nom", "Village", "Culture", "Date", "Frais", "Statut"]];
-        tableData = members.map(m => [m.nom, m.village, m.culture + (m.sousCulture ? ` (${m.sousCulture})` : ''), m.date, `${m.cout} FCFA`, m.statut]);
+        tableData = members.map(m => [m.nom, m.village, m.culture, m.date, `${m.cout} FCFA`, m.statut]);
       } else if (activeTab === 'orders') {
         title = 'SUIVI DES ACHATS'; fileName = 'Rapport_Commandes.pdf';
         tableHeaders = [["Produit", "Quantité", "Date", "Coût", "Statut"]];
@@ -569,7 +570,7 @@ const CoopDashboard: React.FC = () => {
     } catch (err) { alert("Erreur PDF."); }
   };
 
-  const adviceForReceipt = receiptMember ? getAgronomicAdvice(receiptMember.culture, receiptMember.sousCulture, parseFloat(receiptMember.surface)) : null;
+  const adviceForReceipt = receiptMember ? getAgronomicAdvice(receiptMember.culture, parseFloat(receiptMember.surface)) : null;
 
   if (authLoading) return <div className="min-h-screen bg-[#EAE6DF] flex items-center justify-center"><p className="font-medium text-stone-600 animate-pulse">Chargement de votre espace...</p></div>;
   
@@ -706,8 +707,6 @@ const CoopDashboard: React.FC = () => {
   }
   
   if (wizardStep === 3) { 
-    const isRizSelected = newMember.culture?.toLowerCase() === 'riz';
-
     return ( 
       <div className="fixed inset-0 bg-[#EAE6DF] z-[200] overflow-y-auto">
         <div className="bg-[#1b4332] text-white p-5 shadow-md flex justify-between items-center sticky top-0 z-10 rounded-b-3xl">
@@ -730,16 +729,16 @@ const CoopDashboard: React.FC = () => {
             </div>
             
             <div className="space-y-2">
-              <label aria-label="Sélection culture" className="text-sm font-bold text-stone-500 px-2">Quelle est sa culture principale ?</label>
-              <select required className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-lg text-stone-800" 
+              <label aria-label="Sélection culture" className="text-sm font-bold text-stone-500 px-2">Quelle culture principale ?</label>
+              <select required className="w-full p-4 bg-white shadow-sm rounded-xl border-none focus:ring-2 focus:ring-emerald-500 transition-all font-bold text-lg text-stone-800" 
                 value={isCustomCulture ? 'autre' : newMember.culture} 
                 onChange={e => {
                   if (e.target.value === 'autre') {
                     setIsCustomCulture(true);
-                    setNewMember({...newMember, culture: '', sousCulture: ''});
+                    setNewMember({...newMember, culture: ''});
                   } else {
                     setIsCustomCulture(false);
-                    setNewMember({...newMember, culture: e.target.value, sousCulture: ''});
+                    setNewMember({...newMember, culture: e.target.value});
                   }
                 }}>
                 <option value="" disabled>Choisir dans la liste...</option>
@@ -747,22 +746,6 @@ const CoopDashboard: React.FC = () => {
                 <option value="autre" className="font-bold text-emerald-700">➕ Autre (Préciser...)</option>
               </select>
             </div>
-
-            {/* SELECTION TYPE DE RIZ */}
-            {isRizSelected && !isCustomCulture && (
-              <div className="space-y-2 animate-in fade-in slide-in-from-top-2 p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
-                <label aria-label="Type de riz" className="text-sm font-bold text-blue-800">Quel est l'écosystème du riz ?</label>
-                <select required className="w-full p-4 bg-white rounded-xl border-none focus:ring-2 focus:ring-blue-500 transition-all font-bold text-base text-blue-900 shadow-sm"
-                  value={newMember.sousCulture || ''}
-                  onChange={e => setNewMember({...newMember, sousCulture: e.target.value})}>
-                  <option value="" disabled>Sélectionner le type...</option>
-                  <option value="Pluvial">🌧️ Riz Pluvial (Plateau)</option>
-                  <option value="Bas-fond">🌊 Riz de Bas-fond</option>
-                  <option value="Irrigué">💧 Riz Irrigué (Aménagé)</option>
-                </select>
-                <p className="text-[11px] font-medium text-blue-600 mt-2 leading-tight">Ce choix permet à l'application de calculer automatiquement les quantités d'engrais et de semences nécessaires pour le paysan.</p>
-              </div>
-            )}
 
             {isCustomCulture && (
               <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
@@ -818,7 +801,7 @@ const CoopDashboard: React.FC = () => {
             <div className="p-6 bg-stone-50 grid grid-cols-2 gap-4 text-center border-b border-stone-200">
                <div>
                   <p className="text-xs font-bold text-stone-400 uppercase tracking-wide">Culture</p>
-                  <p className="font-bold text-stone-800 text-lg mt-1 leading-tight">{receiptMember.culture} <br/>{receiptMember.sousCulture && <span className="text-sm text-stone-500">({receiptMember.sousCulture})</span>}</p>
+                  <p className="font-bold text-stone-800 text-lg mt-1 leading-tight">{receiptMember.culture}</p>
                </div>
                <div><p className="text-xs font-bold text-stone-400 uppercase tracking-wide">Surface</p><p className="font-bold text-emerald-600 text-2xl mt-1">{receiptMember.surface} ha</p></div>
             </div>
@@ -992,7 +975,7 @@ const CoopDashboard: React.FC = () => {
                           <div className="w-14 h-14 bg-emerald-100 rounded-[1rem] flex items-center justify-center font-black text-emerald-800 text-xl shrink-0">{m.nom[0]}</div>
                           <div>
                             <p className="font-black text-stone-800 text-lg flex items-center gap-2">{m.nom} {m.parcelle && <span title="Parcelle tracée"><MapIcon size={16} className="text-emerald-500" /></span>}</p>
-                            <p className="text-sm font-medium text-stone-500">{m.village} • {m.culture} {m.sousCulture && `(${m.sousCulture})`} • <strong className="text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md ml-1">{m.surface} ha</strong></p>
+                            <p className="text-sm font-medium text-stone-500">{m.village} • {m.culture} • <strong className="text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md ml-1">{m.surface} ha</strong></p>
                           </div>
                         </div>
                         <div className="flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
