@@ -6,7 +6,7 @@ import {
   Package, ArrowDownToLine, ArrowUpFromLine, Check, 
   Play, Square, Undo, Navigation, MapPin, 
   Settings, Target, MapPin as MapPinDrop,
-  Wheat, Coins, Leaf, QrCode, Scan, Printer, KeyRound, AlertTriangle, Copy, WifiOff
+  Wheat, Coins, Leaf, QrCode, Scan, Printer, KeyRound, AlertTriangle, Copy, WifiOff, Sprout
 } from 'lucide-react';
 
 import * as XLSX from 'xlsx';
@@ -60,13 +60,10 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
 
-// ACTIVATION DU MODE HORS LIGNE (PERSISTANCE)
+// ACTIVATION DU MODE HORS LIGNE
 enableIndexedDbPersistence(db).catch((err) => {
-  if (err.code === 'failed-precondition') {
-    console.warn("La persistance hors ligne ne peut être activée que dans un seul onglet à la fois.");
-  } else if (err.code === 'unimplemented') {
-    console.warn("Le navigateur actuel ne supporte pas la persistance hors ligne.");
-  }
+  if (err.code === 'failed-precondition') console.warn("Multiples onglets ouverts.");
+  else if (err.code === 'unimplemented') console.warn("Persistance non supportée.");
 });
 
 // --- TYPES ---
@@ -99,6 +96,7 @@ interface Member {
   nom: string;
   village: string;
   culture: string;
+  sousCulture?: string; // Ex: Pluvial, Bas-fond, Irrigué
   surface: string;
   statut: string;
   date: string; 
@@ -150,13 +148,29 @@ const MapInvalidator = () => {
   return null;
 };
 
+// --- MOTEUR DE PRESCRIPTION AGRONOMIQUE ---
+const getAgronomicAdvice = (culture: string, sousCulture: string | undefined, surfaceHa: number) => {
+  const s = surfaceHa || 0;
+  const cult = culture.toLowerCase();
+  
+  if (cult.includes('riz')) {
+    if (sousCulture === 'Irrigué') return { semence: s*60, npk: s*250, uree: s*150 };
+    if (sousCulture === 'Bas-fond') return { semence: s*50, npk: s*200, uree: s*100 };
+    return { semence: s*40, npk: s*150, uree: s*50 }; // Pluvial par défaut
+  }
+  if (cult.includes('maïs')) return { semence: s*20, npk: s*150, uree: s*100 };
+  if (cult.includes('coton')) return { semence: s*15, npk: s*200, uree: s*50 };
+  if (cult.includes('cacao')) return { semence: 0, npk: s*150, uree: 0 };
+  
+  return null; // Pas de prescription précise
+};
+
 // --- COMPOSANT PRINCIPAL ---
 const CoopDashboard: React.FC = () => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [authLoading, setAuthLoading] = useState(true); 
   const [authMode, setAuthMode] = useState<'login' | 'register_admin' | 'register_agent'>('login');
   
-  // GESTION DU RÉSEAU (HORS LIGNE)
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
 
   useEffect(() => {
@@ -201,7 +215,7 @@ const CoopDashboard: React.FC = () => {
   const [showScanner, setShowScanner] = useState(false);
   const [scanData, setScanData] = useState('');
 
-  const [newMember, setNewMember] = useState<Partial<Member>>({ nom: '', village: '', culture: '', surface: '', date: '', cout: '' });
+  const [newMember, setNewMember] = useState<Partial<Member>>({ nom: '', village: '', culture: '', sousCulture: '', surface: '', date: '', cout: '' });
   const [isCustomCulture, setIsCustomCulture] = useState(false);
 
   const [newOrder, setNewOrder] = useState<Partial<Order>>({ produit: '', qte: '', date: '', cout: '' });
@@ -223,7 +237,7 @@ const CoopDashboard: React.FC = () => {
           }
           setIsLoggedIn(true);
         } catch (e) {
-          console.error("Lecture de l'utilisateur impossible (probablement hors ligne sans cache initial)", e);
+          console.error("Lecture de l'utilisateur impossible (cache initial manquant)", e);
           setIsLoggedIn(true); 
         }
       } else {
@@ -236,7 +250,6 @@ const CoopDashboard: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // CHARGEMENT DES DONNÉES ET DE LA MÉTÉO CORRIGÉE
   useEffect(() => {
     if (isLoggedIn && appUser) {
       const fetchData = async () => {
@@ -248,13 +261,13 @@ const CoopDashboard: React.FC = () => {
 
             if (!isOffline && currentProfile.lat && currentProfile.lng) {
               try {
-                // Requête Météo avec timezone=auto et precipitation_probability_max (CORRECTION 400 BAD REQUEST)
-                const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${currentProfile.lat}&longitude=${currentProfile.lng}&current_weather=true&daily=precipitation_probability_max,precipitation_sum&timezone=auto&forecast_days=3`);
+                // MÉTÉO OPTIMISÉE : Modèle 'best_match' haute résolution + Fuseau horaire strict Afrique de l'Ouest
+                const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${currentProfile.lat}&longitude=${currentProfile.lng}&current_weather=true&daily=precipitation_probability_max,precipitation_sum&timezone=Africa%2FAbidjan&models=best_match&forecast_days=3`);
                 
                 if (!weatherRes.ok) throw new Error(`Erreur HTTP: ${weatherRes.status}`);
                 const wData = await weatherRes.json();
 
-                let locName = currentProfile.nom; // Fallback au nom de la coopérative
+                let locName = currentProfile.nom; 
                 try {
                   const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${currentProfile.lat}&lon=${currentProfile.lng}&zoom=10`, {
                     headers: { 'Accept-Language': 'fr' }
@@ -263,11 +276,8 @@ const CoopDashboard: React.FC = () => {
                   if (geoData && geoData.address) {
                     locName = geoData.address.city || geoData.address.town || geoData.address.village || geoData.address.county || geoData.address.state || locName;
                   }
-                } catch(e) {
-                   console.warn("Géocodage inversé échoué, utilisation du nom par défaut.");
-                }
+                } catch(e) { console.warn("Géocodage inversé échoué."); }
 
-                // Récupération correcte de probability_max
                 const alerts = wData.daily?.time?.map((t: string, i: number) => ({
                   date: t,
                   prob: wData.daily.precipitation_probability_max[i] || 0,
@@ -282,7 +292,7 @@ const CoopDashboard: React.FC = () => {
                 });
                 setWeatherError(false);
               } catch(e) {
-                 console.error("Erreur complète API Météo", e);
+                 console.error("Erreur API Météo", e);
                  setWeatherError(true);
               }
             } else if (isOffline) {
@@ -336,10 +346,7 @@ const CoopDashboard: React.FC = () => {
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isOffline) {
-      alert("La première connexion ou la création de compte nécessite une connexion internet. Veuillez vous connecter au réseau.");
-      return;
-    }
+    if (isOffline) return alert("La première connexion nécessite internet. Veuillez vous connecter au réseau.");
     
     try {
       if (authMode === 'register_admin') {
@@ -353,14 +360,11 @@ const CoopDashboard: React.FC = () => {
           cultures: [
             { nom: "Cacao", rendementHa: 0.5, prixTonne: 1500000 },
             { nom: "Anacarde", rendementHa: 0.8, prixTonne: 400000 },
-            { nom: "Hévéa", rendementHa: 1.5, prixTonne: 300000 },
-            { nom: "Café", rendementHa: 0.4, prixTonne: 1200000 },
-            { nom: "Coton", rendementHa: 1.2, prixTonne: 300000 },
-            { nom: "Palmier à huile", rendementHa: 10, prixTonne: 50000 },
-            { nom: "Maïs", rendementHa: 2, prixTonne: 150000 },
             { nom: "Riz", rendementHa: 3, prixTonne: 300000 },
-            { nom: "Manioc", rendementHa: 15, prixTonne: 25000 },
-            { nom: "Igname", rendementHa: 10, prixTonne: 200000 }
+            { nom: "Hévéa", rendementHa: 1.5, prixTonne: 300000 },
+            { nom: "Coton", rendementHa: 1.2, prixTonne: 300000 },
+            { nom: "Maïs", rendementHa: 2, prixTonne: 150000 },
+            { nom: "Manioc", rendementHa: 15, prixTonne: 25000 }
           ] 
         });
         
@@ -396,15 +400,8 @@ const CoopDashboard: React.FC = () => {
   const getLocationForRegistration = () => {
     setIsLocating(true);
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setRegisterData(prev => ({ ...prev, lat: pos.coords.latitude, lng: pos.coords.longitude }));
-        setIsLocating(false);
-      },
-      (err) => { 
-        console.error(err);
-        alert("Impossible d'obtenir la position. Vérifiez vos autorisations GPS."); 
-        setIsLocating(false); 
-      }
+      (pos) => { setRegisterData(prev => ({ ...prev, lat: pos.coords.latitude, lng: pos.coords.longitude })); setIsLocating(false); },
+      (err) => { console.error(err); alert("Impossible d'obtenir la position."); setIsLocating(false); }
     );
   };
 
@@ -452,9 +449,7 @@ const CoopDashboard: React.FC = () => {
       try {
         await updateDoc(doc(db, "cooperatives", appUser.coopId), { cultures: updatedCultures });
         setCoopProfile({ ...coopProfile, cultures: updatedCultures });
-      } catch (err) { 
-        console.error(err);
-      }
+      } catch (err) { console.error(err); }
     }
   };
 
@@ -494,6 +489,7 @@ const CoopDashboard: React.FC = () => {
     setNewMember({ 
       nom: '', village: '', 
       culture: coopProfile?.cultures.length ? coopProfile.cultures[0].nom : '', 
+      sousCulture: '',
       surface: '', date: new Date().toISOString().split('T')[0], cout: '5000' 
     });
     initialCenterDone.current = false;
@@ -504,7 +500,7 @@ const CoopDashboard: React.FC = () => {
   const addManualPoint = (p: Point) => { if (!isTracking) setParcelPoints(prev => [...prev, p]); };
 
   const calculateAreaAndProceed = () => {
-    if (parcelPoints.length < 3) { alert("Il faut au moins 3 points."); return; }
+    if (parcelPoints.length < 3) return alert("Il faut au moins 3 points.");
     try {
       const coords = parcelPoints.map(p => [p.lng, p.lat]);
       coords.push([parcelPoints[0].lng, parcelPoints[0].lat]);
@@ -548,7 +544,7 @@ const CoopDashboard: React.FC = () => {
     let fileName = 'Export.xlsx';
 
     if (activeTab === 'members') {
-      dataToExport = members.map(m => ({ Nom: m.nom, Village: m.village, Culture: m.culture, Surface: `${m.surface} ha`, Date: m.date, Frais: `${m.cout} FCFA`, Statut: m.statut }));
+      dataToExport = members.map(m => ({ Nom: m.nom, Village: m.village, Culture: m.culture + (m.sousCulture ? ` (${m.sousCulture})` : ''), Surface: `${m.surface} ha`, Date: m.date, Frais: `${m.cout} FCFA`, Statut: m.statut }));
       fileName = 'Liste_Membres.xlsx';
     } else if (activeTab === 'orders') {
       dataToExport = orders.map(o => ({ Produit: o.produit, Quantite: o.qte, Date: o.date, Cout: `${o.cout} FCFA`, Statut: o.statut }));
@@ -570,45 +566,35 @@ const CoopDashboard: React.FC = () => {
   const exportToPDF = () => {
     try {
       const docPDF = new jsPDF();
-      let title = '';
-      let tableHeaders: string[][] = [];
-      let tableData: string[][] = [];
-      let fileName = 'Rapport.pdf';
+      let title = ''; let tableHeaders: string[][] = []; let tableData: string[][] = []; let fileName = 'Rapport.pdf';
 
       if (activeTab === 'members') {
-        title = 'ANNUAIRE DES PAYSANS';
-        fileName = 'Rapport_Membres.pdf';
+        title = 'ANNUAIRE DES PAYSANS'; fileName = 'Rapport_Membres.pdf';
         tableHeaders = [["Nom", "Village", "Culture", "Date", "Frais", "Statut"]];
-        tableData = members.map(m => [m.nom, m.village, m.culture, m.date, `${m.cout} FCFA`, m.statut]);
+        tableData = members.map(m => [m.nom, m.village, m.culture + (m.sousCulture ? ` (${m.sousCulture})` : ''), m.date, `${m.cout} FCFA`, m.statut]);
       } else if (activeTab === 'orders') {
-        title = 'SUIVI DES ACHATS';
-        fileName = 'Rapport_Commandes.pdf';
+        title = 'SUIVI DES ACHATS'; fileName = 'Rapport_Commandes.pdf';
         tableHeaders = [["Produit", "Quantité", "Date", "Coût", "Statut"]];
         tableData = orders.map(o => [o.produit || "", o.qte || "", o.date || "", `${o.cout} FCFA`, o.statut || ""]);
       } else if (activeTab === 'harvests') {
-        title = 'SUIVI DES RÉCOLTES & VENTES';
-        fileName = 'Rapport_Recoltes.pdf';
+        title = 'SUIVI DES RÉCOLTES & VENTES'; fileName = 'Rapport_Recoltes.pdf';
         tableHeaders = [["Opération", "Culture", "Quantité (T)", "Date", "Montant (FCFA)", "Tiers"]];
         tableData = harvests.map(h => [h.type === 'recolte' ? 'Récolte' : 'Vente', h.culture, h.qte.toString(), h.date, h.type === 'vente' ? h.montant?.toString() || "0" : "-", h.acteur || "-"]);
       } else {
-        title = 'HISTORIQUE DU MAGASIN (STOCKS)';
-        fileName = 'Rapport_Magasin.pdf';
+        title = 'HISTORIQUE DU MAGASIN (STOCKS)'; fileName = 'Rapport_Magasin.pdf';
         tableHeaders = [["Opération", "Produit", "Quantité", "Date", "Valeur", "Tiers"]];
         tableData = stock.map(s => [s.type === 'entree' ? 'Entrée' : 'Sortie', s.produit, s.qte, s.date, `${s.cout} FCFA`, s.acteur]);
       }
 
-      docPDF.setFontSize(16);
-      docPDF.text(title, 14, 15);
-      docPDF.setFontSize(10);
-      docPDF.text(coopProfile?.nom || "Coopérative", 14, 22);
+      docPDF.setFontSize(16); docPDF.text(title, 14, 15);
+      docPDF.setFontSize(10); docPDF.text(coopProfile?.nom || "Coopérative", 14, 22);
       
       autoTable(docPDF, { head: tableHeaders, body: tableData, startY: 30, theme: 'grid', headStyles: { fillColor: [27, 67, 50] } });
       docPDF.save(fileName);
-    } catch (err) { 
-      console.error(err); 
-      alert("Erreur PDF."); 
-    }
+    } catch (err) { alert("Erreur PDF."); }
   };
+
+  const adviceForReceipt = receiptMember ? getAgronomicAdvice(receiptMember.culture, receiptMember.sousCulture, parseFloat(receiptMember.surface)) : null;
 
   if (authLoading) return <div className="min-h-screen bg-[#EAE6DF] flex items-center justify-center"><p className="font-medium text-stone-600 animate-pulse">Chargement de votre espace...</p></div>;
   
@@ -673,7 +659,6 @@ const CoopDashboard: React.FC = () => {
     );
   }
 
-  // --- RENDUS WIZARD (TRACÉ GPS) ---
   if (wizardStep === 1) { 
     return ( 
       <div className="fixed inset-0 bg-[#EAE6DF] z-[200] flex flex-col">
@@ -746,6 +731,8 @@ const CoopDashboard: React.FC = () => {
   }
   
   if (wizardStep === 3) { 
+    const isRizSelected = newMember.culture?.toLowerCase() === 'riz';
+
     return ( 
       <div className="fixed inset-0 bg-[#EAE6DF] z-[200] overflow-y-auto">
         <div className="bg-[#1b4332] text-white p-5 shadow-md flex justify-between items-center sticky top-0 z-10 rounded-b-3xl">
@@ -774,10 +761,10 @@ const CoopDashboard: React.FC = () => {
                 onChange={e => {
                   if (e.target.value === 'autre') {
                     setIsCustomCulture(true);
-                    setNewMember({...newMember, culture: ''});
+                    setNewMember({...newMember, culture: '', sousCulture: ''});
                   } else {
                     setIsCustomCulture(false);
-                    setNewMember({...newMember, culture: e.target.value});
+                    setNewMember({...newMember, culture: e.target.value, sousCulture: ''});
                   }
                 }}>
                 <option value="" disabled>Choisir dans la liste...</option>
@@ -786,10 +773,26 @@ const CoopDashboard: React.FC = () => {
               </select>
             </div>
 
+            {/* SELECTION TYPE DE RIZ (Nouveauté) */}
+            {isRizSelected && !isCustomCulture && (
+              <div className="space-y-2 animate-in fade-in slide-in-from-top-2 p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
+                <label aria-label="Type de riz" className="text-sm font-bold text-blue-800">Quel est l'écosystème du riz ?</label>
+                <select required className="w-full p-4 bg-white rounded-xl border-none focus:ring-2 focus:ring-blue-500 transition-all font-bold text-base text-blue-900 shadow-sm"
+                  value={newMember.sousCulture || ''}
+                  onChange={e => setNewMember({...newMember, sousCulture: e.target.value})}>
+                  <option value="" disabled>Sélectionner le type...</option>
+                  <option value="Pluvial">🌧️ Riz Pluvial (Plateau)</option>
+                  <option value="Bas-fond">🌊 Riz de Bas-fond</option>
+                  <option value="Irrigué">💧 Riz Irrigué (Aménagé)</option>
+                </select>
+                <p className="text-[11px] font-medium text-blue-600 mt-2 leading-tight">Ce choix permet à l'application de calculer automatiquement les quantités d'engrais et de semences nécessaires pour le paysan.</p>
+              </div>
+            )}
+
             {isCustomCulture && (
               <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
                 <label className="text-sm font-bold text-emerald-600 px-2">Précisez la culture</label>
-                <input required placeholder="Ex: Cacao, Tomate, etc." className="w-full p-4 bg-emerald-50/50 rounded-2xl border border-emerald-200 focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-bold text-lg text-emerald-900" value={newMember.culture} onChange={e => setNewMember({...newMember, culture: e.target.value})} />
+                <input required placeholder="Ex: Tomate, etc." className="w-full p-4 bg-emerald-50/50 rounded-2xl border border-emerald-200 focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-bold text-lg text-emerald-900" value={newMember.culture} onChange={e => setNewMember({...newMember, culture: e.target.value})} />
                 <p className="text-xs font-medium text-amber-600 px-2 flex items-center gap-1 mt-1"><AlertTriangle size={12}/> Pensez à ajouter cette culture dans "Paramètres" plus tard pour vos calculs financiers.</p>
               </div>
             )}
@@ -806,13 +809,26 @@ const CoopDashboard: React.FC = () => {
   const filteredStock = stock.filter(s => s.produit.toLowerCase().includes(searchTerm.toLowerCase()));
   const filteredHarvests = harvests.filter(h => h.culture.toLowerCase().includes(searchTerm.toLowerCase()) || (h.acteur && h.acteur.toLowerCase().includes(searchTerm.toLowerCase())));
   
+  // ALERTE METEO AGRONOMIQUE
+  const getAgronomicWeatherAlert = () => {
+    if (!weather || !weather.alerts || weather.alerts.length === 0) return null;
+    const today = weather.alerts[0];
+    const tomorrow = weather.alerts[1];
+    
+    if ((today && (today.sum > 10 || today.prob > 60)) || (tomorrow && (tomorrow.sum > 10 || tomorrow.prob > 60))) {
+      return { type: 'danger', text: "⚠️ Fortes pluies prévues à court terme. Déconseillez l'épandage d'engrais (risque de lessivage) et les traitements herbicides." };
+    }
+    return { type: 'success', text: "✅ Conditions météo favorables. Période propice pour l'épandage d'engrais ou les traitements phytosanitaires." };
+  };
+  const agronomicAlert = getAgronomicWeatherAlert();
+
   return (
     <div className="min-h-screen bg-[#EAE6DF] pb-28 font-sans">
       
-      {/* MODAL DE REÇU AVEC QR CODE */}
+      {/* MODAL DE REÇU AVEC QR CODE & PRESCRIPTION AGRONOMIQUE */}
       {receiptMember && (
-        <div className="fixed inset-0 bg-stone-900/80 flex items-center justify-center p-4 z-[500] backdrop-blur-sm">
-          <div className="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl relative">
+        <div className="fixed inset-0 bg-stone-900/80 flex items-center justify-center p-4 z-[500] backdrop-blur-sm overflow-y-auto">
+          <div className="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl relative my-8">
             <div className="bg-[#1b4332] p-6 text-center relative overflow-hidden">
               <div className="absolute -right-4 -top-4 opacity-10"><MapIcon size={100} /></div>
               <h3 className="font-black text-2xl text-white relative z-10">{coopProfile?.nom}</h3>
@@ -827,10 +843,36 @@ const CoopDashboard: React.FC = () => {
               <p className="text-stone-500 font-medium text-center">{receiptMember.village}</p>
             </div>
 
-            <div className="p-6 bg-stone-50 grid grid-cols-2 gap-4 text-center">
-               <div><p className="text-xs font-bold text-stone-400 uppercase tracking-wide">Culture</p><p className="font-bold text-stone-800 text-lg mt-1">{receiptMember.culture}</p></div>
-               <div><p className="text-xs font-bold text-stone-400 uppercase tracking-wide">Surface</p><p className="font-bold text-emerald-600 text-lg mt-1">{receiptMember.surface} ha</p></div>
+            <div className="p-6 bg-stone-50 grid grid-cols-2 gap-4 text-center border-b border-stone-200">
+               <div>
+                  <p className="text-xs font-bold text-stone-400 uppercase tracking-wide">Culture</p>
+                  <p className="font-bold text-stone-800 text-lg mt-1 leading-tight">{receiptMember.culture} <br/>{receiptMember.sousCulture && <span className="text-sm text-stone-500">({receiptMember.sousCulture})</span>}</p>
+               </div>
+               <div><p className="text-xs font-bold text-stone-400 uppercase tracking-wide">Surface</p><p className="font-bold text-emerald-600 text-2xl mt-1">{receiptMember.surface} ha</p></div>
             </div>
+
+            {/* PRESCRIPTION AGRONOMIQUE */}
+            {adviceForReceipt && (
+              <div className="p-6 bg-emerald-50/50">
+                <p className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider mb-4 flex items-center gap-2 justify-center"><Sprout size={14}/> Prescription / Besoins Estimés</p>
+                <div className="grid grid-cols-3 gap-3 text-center">
+                  <div className="bg-white py-3 px-2 rounded-2xl shadow-sm border border-emerald-100">
+                    <p className="text-[10px] text-stone-500 font-bold uppercase mb-1">Semences</p>
+                    <p className="font-black text-emerald-700">{adviceForReceipt.semence.toFixed(0)} kg</p>
+                  </div>
+                  <div className="bg-white py-3 px-2 rounded-2xl shadow-sm border border-emerald-100 relative">
+                    <p className="text-[10px] text-stone-500 font-bold uppercase mb-1">NPK 15-15</p>
+                    <p className="font-black text-emerald-700">{adviceForReceipt.npk.toFixed(0)} kg</p>
+                    <div className="absolute -top-2 -right-2 bg-amber-400 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-md shadow-sm">{Math.ceil(adviceForReceipt.npk/50)} Sacs</div>
+                  </div>
+                  <div className="bg-white py-3 px-2 rounded-2xl shadow-sm border border-emerald-100 relative">
+                    <p className="text-[10px] text-stone-500 font-bold uppercase mb-1">Urée (46%)</p>
+                    <p className="font-black text-emerald-700">{adviceForReceipt.uree.toFixed(0)} kg</p>
+                    <div className="absolute -top-2 -right-2 bg-amber-400 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-md shadow-sm">{Math.ceil(adviceForReceipt.uree/50)} Sacs</div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="p-4 bg-white flex gap-2">
               <button onClick={() => window.print()} className="flex-1 bg-stone-100 hover:bg-stone-200 text-stone-700 py-4 rounded-xl font-bold flex justify-center items-center gap-2 transition-colors"><Printer size={18} /> Imprimer</button>
@@ -973,7 +1015,6 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 </div>
 
-                {/* LISTE DES MEMBRES */}
                 {activeTab === 'members' && (
                   <div className="grid gap-4">
                     {filteredMembers.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Aucun producteur trouvé.</p> : null}
@@ -983,7 +1024,7 @@ const CoopDashboard: React.FC = () => {
                           <div className="w-14 h-14 bg-emerald-100 rounded-[1rem] flex items-center justify-center font-black text-emerald-800 text-xl shrink-0">{m.nom[0]}</div>
                           <div>
                             <p className="font-black text-stone-800 text-lg flex items-center gap-2">{m.nom} {m.parcelle && <span title="Parcelle tracée"><MapIcon size={16} className="text-emerald-500" /></span>}</p>
-                            <p className="text-sm font-medium text-stone-500">{m.village} • {m.culture} • <strong className="text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md ml-1">{m.surface} ha</strong></p>
+                            <p className="text-sm font-medium text-stone-500">{m.village} • {m.culture} {m.sousCulture && `(${m.sousCulture})`} • <strong className="text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md ml-1">{m.surface} ha</strong></p>
                           </div>
                         </div>
                         <div className="flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
@@ -995,7 +1036,6 @@ const CoopDashboard: React.FC = () => {
                   </div>
                 )}
 
-                {/* AUTRES LISTES (Identiques) */}
                 {activeTab === 'harvests' && (
                   <div className="grid gap-4">
                      {filteredHarvests.length === 0 ? <p className="text-center text-stone-400 py-10 font-medium">Aucune récolte ou vente enregistrée.</p> : null}
@@ -1228,8 +1268,8 @@ const CoopDashboard: React.FC = () => {
                   </div>
 
                   <div className="pt-5 border-t border-blue-200/50">
-                    <p className="text-xs font-bold text-blue-800 mb-3 uppercase tracking-wider flex items-center gap-2"><AlertTriangle size={14} className="text-amber-500"/> Alertes Pluie (3 jours)</p>
-                    <div className="space-y-2">
+                    <p className="text-xs font-bold text-blue-800 mb-3 uppercase tracking-wider flex items-center gap-2"><AlertTriangle size={14} className="text-amber-500"/> Prévisions (3 jours)</p>
+                    <div className="space-y-2 mb-4">
                       {weather.alerts.map((a, i) => (
                         <div key={i} className="flex justify-between items-center bg-white/40 px-3 py-2.5 rounded-xl text-sm font-medium text-blue-900 border border-white/50">
                           <span className="capitalize">{new Date(a.date).toLocaleDateString('fr-FR', {weekday: 'short', day: 'numeric'})}</span>
@@ -1240,6 +1280,13 @@ const CoopDashboard: React.FC = () => {
                         </div>
                       ))}
                     </div>
+                    
+                    {/* ALERTE MÉTÉO AGRONOMIQUE INTÉGRÉE */}
+                    {agronomicAlert && (
+                      <div className={`p-4 rounded-2xl text-sm font-bold leading-relaxed border ${agronomicAlert.type === 'danger' ? 'bg-red-50 text-red-800 border-red-100' : 'bg-emerald-50 text-emerald-800 border-emerald-100'}`}>
+                        {agronomicAlert.text}
+                      </div>
+                    )}
                   </div>
                 </>
               ) : (
@@ -1267,7 +1314,7 @@ const CoopDashboard: React.FC = () => {
                             <Popup>
                               <div className="text-sm min-w-[150px] p-1 font-sans">
                                 <strong className="text-lg font-black text-stone-800 block mb-1">{m.nom}</strong>
-                                <p className="text-stone-600 font-medium mb-1">{m.village} • {m.culture}</p>
+                                <p className="text-stone-600 font-medium mb-1">{m.village} • {m.culture} {m.sousCulture && `(${m.sousCulture})`}</p>
                                 <p className="text-emerald-600 font-bold bg-emerald-50 px-2 py-1 rounded-md inline-block">{m.surface} ha</p>
                               </div>
                             </Popup>
