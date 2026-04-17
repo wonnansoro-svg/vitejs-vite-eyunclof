@@ -236,7 +236,7 @@ const CoopDashboard: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // CHARGEMENT DES DONNÉES ET DE LA MÉTÉO (CORRIGÉ ET ROBUSTE)
+  // CHARGEMENT DES DONNÉES ET DE LA MÉTÉO CORRIGÉE
   useEffect(() => {
     if (isLoggedIn && appUser) {
       const fetchData = async () => {
@@ -248,15 +248,14 @@ const CoopDashboard: React.FC = () => {
 
             if (!isOffline && currentProfile.lat && currentProfile.lng) {
               try {
-                // Requête Météo avec timezone=auto pour plus de robustesse
-                const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${currentProfile.lat}&longitude=${currentProfile.lng}&current_weather=true&daily=precipitation_probability,precipitation_sum&timezone=auto&forecast_days=3`);
+                // Requête Météo avec timezone=auto et precipitation_probability_max (CORRECTION 400 BAD REQUEST)
+                const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${currentProfile.lat}&longitude=${currentProfile.lng}&current_weather=true&daily=precipitation_probability_max,precipitation_sum&timezone=auto&forecast_days=3`);
                 
-                if (!weatherRes.ok) throw new Error("Erreur serveur météo");
+                if (!weatherRes.ok) throw new Error(`Erreur HTTP: ${weatherRes.status}`);
                 const wData = await weatherRes.json();
 
                 let locName = currentProfile.nom; // Fallback au nom de la coopérative
                 try {
-                  // Ajout de headers pour éviter le blocage par Nominatim
                   const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${currentProfile.lat}&lon=${currentProfile.lng}&zoom=10`, {
                     headers: { 'Accept-Language': 'fr' }
                   });
@@ -268,9 +267,10 @@ const CoopDashboard: React.FC = () => {
                    console.warn("Géocodage inversé échoué, utilisation du nom par défaut.");
                 }
 
+                // Récupération correcte de probability_max
                 const alerts = wData.daily?.time?.map((t: string, i: number) => ({
                   date: t,
-                  prob: wData.daily.precipitation_probability[i] || 0,
+                  prob: wData.daily.precipitation_probability_max[i] || 0,
                   sum: wData.daily.precipitation_sum[i] || 0
                 })) || [];
 
