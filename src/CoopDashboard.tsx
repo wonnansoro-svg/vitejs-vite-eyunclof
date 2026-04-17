@@ -44,8 +44,8 @@ const vertexIcon = new L.Icon({
 
 // --- CONFIGURATION FIREBASE ---
 import { initializeApp } from 'firebase/app';
-// CORRECTION : Réintégration de getDoc et getDocs
-import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, setDoc, getDoc, updateDoc, query, where, enableIndexedDbPersistence, onSnapshot } from 'firebase/firestore';
+// CORRECTION : Retrait de getDocs car nous utilisons désormais onSnapshot
+import { getFirestore, collection, addDoc, deleteDoc, doc, setDoc, getDoc, updateDoc, query, where, enableIndexedDbPersistence, onSnapshot } from 'firebase/firestore';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 
 const firebaseConfig = {
