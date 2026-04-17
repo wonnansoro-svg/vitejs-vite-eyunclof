@@ -44,7 +44,7 @@ const vertexIcon = new L.Icon({
 
 // --- CONFIGURATION FIREBASE ---
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, setDoc, getDoc, updateDoc, query, where, enableIndexedDbPersistence } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, deleteDoc, doc, setDoc, updateDoc, query, where, enableIndexedDbPersistence, onSnapshot } from 'firebase/firestore';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 
 const firebaseConfig = {
@@ -60,10 +60,10 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
 
-// ACTIVATION DU MODE HORS LIGNE
+// ACTIVATION DU MODE HORS LIGNE (PERSISTANCE ROBUSTE)
 enableIndexedDbPersistence(db).catch((err) => {
-  if (err.code === 'failed-precondition') console.warn("Multiples onglets ouverts.");
-  else if (err.code === 'unimplemented') console.warn("Persistance non supportée.");
+  if (err.code === 'failed-precondition') console.warn("Multiples onglets ouverts. La persistance hors-ligne ne fonctionne que sur un onglet.");
+  else if (err.code === 'unimplemented') console.warn("Persistance non supportée par ce navigateur.");
 });
 
 // --- TYPES ---
@@ -96,7 +96,7 @@ interface Member {
   nom: string;
   village: string;
   culture: string;
-  sousCulture?: string; // Ex: Pluvial, Bas-fond, Irrigué
+  sousCulture?: string; 
   surface: string;
   statut: string;
   date: string; 
@@ -117,7 +117,9 @@ const AutoFitBounds = ({ members, defaultCenter }: { members: Member[], defaultC
   const map = useMap();
   useEffect(() => {
     if (!members || members.length === 0) {
-      map.setView([defaultCenter.lat, defaultCenter.lng], 10);
+      if (defaultCenter?.lat && defaultCenter?.lng) {
+        map.setView([defaultCenter.lat, defaultCenter.lng], 10);
+      }
       return;
     }
     const bounds = new L.LatLngBounds([]);
@@ -149,20 +151,20 @@ const MapInvalidator = () => {
 };
 
 // --- MOTEUR DE PRESCRIPTION AGRONOMIQUE ---
-const getAgronomicAdvice = (culture: string, sousCulture: string | undefined, surfaceHa: number) => {
+const getAgronomicAdvice = (culture: string | undefined, sousCulture: string | undefined, surfaceHa: number) => {
   const s = surfaceHa || 0;
-  const cult = culture.toLowerCase();
+  const cult = (culture || '').toLowerCase();
   
   if (cult.includes('riz')) {
     if (sousCulture === 'Irrigué') return { semence: s*60, npk: s*250, uree: s*150 };
     if (sousCulture === 'Bas-fond') return { semence: s*50, npk: s*200, uree: s*100 };
-    return { semence: s*40, npk: s*150, uree: s*50 }; // Pluvial par défaut
+    return { semence: s*40, npk: s*150, uree: s*50 }; 
   }
   if (cult.includes('maïs')) return { semence: s*20, npk: s*150, uree: s*100 };
   if (cult.includes('coton')) return { semence: s*15, npk: s*200, uree: s*50 };
   if (cult.includes('cacao')) return { semence: 0, npk: s*150, uree: 0 };
   
-  return null; // Pas de prescription précise
+  return null;
 };
 
 // --- COMPOSANT PRINCIPAL ---
@@ -223,23 +225,14 @@ const CoopDashboard: React.FC = () => {
   const [newCrop, setNewCrop] = useState<CropConfig>({ nom: '', rendementHa: 0, prixTonne: 0 });
   const [newHarvest, setNewHarvest] = useState<Partial<Harvest>>({ type: 'recolte', culture: '', qte: 0, date: new Date().toISOString().split('T')[0], montant: 0, acteur: '' });
 
+  // 1. AUTHENTIFICATION
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
-        try {
-          const userDoc = await getDoc(doc(db, "users", user.uid));
-          if (userDoc.exists()) {
-            setAppUser(userDoc.data() as AppUser);
-          } else {
-            const legacyUser: AppUser = { uid: user.uid, email: user.email || '', role: 'admin', coopId: user.uid };
-            await setDoc(doc(db, "users", user.uid), legacyUser);
-            setAppUser(legacyUser);
-          }
-          setIsLoggedIn(true);
-        } catch (e) {
-          console.error("Lecture de l'utilisateur impossible (cache initial manquant)", e);
-          setIsLoggedIn(true); 
-        }
+        // En mode hors ligne strict sans cache initial, l'utilisateur existe dans l'objet auth
+        // mais le doc user peut ne pas être lu. onSnapshot s'en chargera dans le useEffect suivant.
+        setAppUser({ uid: user.uid, email: user.email || '', role: 'agent', coopId: '' }); // Profil temporaire
+        setIsLoggedIn(true);
       } else {
         setIsLoggedIn(false);
         setAppUser(null);
@@ -250,79 +243,98 @@ const CoopDashboard: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
+  // 2. SYNCHRONISATION TEMPS RÉEL DE TOUTES LES DONNÉES (PHASE PILOTE)
   useEffect(() => {
-    if (isLoggedIn && appUser) {
-      const fetchData = async () => {
-        try {
-          const profileSnap = await getDoc(doc(db, "cooperatives", appUser.coopId));
-          if (profileSnap.exists()) {
-            const currentProfile = { id: profileSnap.id, ...profileSnap.data() } as CoopProfile;
-            setCoopProfile(currentProfile);
+    if (!isLoggedIn || !auth.currentUser) return;
 
-            if (!isOffline && currentProfile.lat && currentProfile.lng) {
-              try {
-                // MÉTÉO OPTIMISÉE : Modèle 'best_match' haute résolution + Fuseau horaire strict Afrique de l'Ouest
-                const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${currentProfile.lat}&longitude=${currentProfile.lng}&current_weather=true&daily=precipitation_probability_max,precipitation_sum&timezone=Africa%2FAbidjan&models=best_match&forecast_days=3`);
-                
-                if (!weatherRes.ok) throw new Error(`Erreur HTTP: ${weatherRes.status}`);
-                const wData = await weatherRes.json();
+    const unsubs: (() => void)[] = [];
 
-                let locName = currentProfile.nom; 
-                try {
-                  const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${currentProfile.lat}&lon=${currentProfile.lng}&zoom=10`, {
-                    headers: { 'Accept-Language': 'fr' }
-                  });
-                  const geoData = await geoRes.json();
-                  if (geoData && geoData.address) {
-                    locName = geoData.address.city || geoData.address.town || geoData.address.village || geoData.address.county || geoData.address.state || locName;
-                  }
-                } catch(e) { console.warn("Géocodage inversé échoué."); }
+    // A. Écoute de l'utilisateur connecté pour avoir son vrai rôle et coopId
+    const unsubUser = onSnapshot(doc(db, "users", auth.currentUser.uid), (docSnap) => {
+      if (docSnap.exists()) {
+        const uData = docSnap.data() as AppUser;
+        setAppUser(uData);
 
-                const alerts = wData.daily?.time?.map((t: string, i: number) => ({
-                  date: t,
-                  prob: wData.daily.precipitation_probability_max[i] || 0,
-                  sum: wData.daily.precipitation_sum[i] || 0
-                })) || [];
-
-                setWeather({
-                  temp: wData.current_weather?.temperature || 0,
-                  isSunny: wData.current_weather?.weathercode <= 3,
-                  locationName: locName,
-                  alerts
-                });
-                setWeatherError(false);
-              } catch(e) {
-                 console.error("Erreur API Météo", e);
-                 setWeatherError(true);
-              }
-            } else if (isOffline) {
-              setWeatherError(true);
+        if (uData.coopId) {
+          // B. Écoute du profil de la coopérative
+          const unsubProfile = onSnapshot(doc(db, "cooperatives", uData.coopId), (profileSnap) => {
+            if (profileSnap.exists()) {
+              setCoopProfile({ id: profileSnap.id, ...profileSnap.data() } as CoopProfile);
             }
-          }
+          });
+          unsubs.push(unsubProfile);
 
-          const qMembres = query(collection(db, "membres"), where("coopId", "==", appUser.coopId));
-          const mSnap = await getDocs(qMembres);
-          setMembers(mSnap.docs.map(d => ({ id: d.id, ...d.data() } as Member)));
-          
-          const qCommandes = query(collection(db, "commandes"), where("coopId", "==", appUser.coopId));
-          const oSnap = await getDocs(qCommandes);
-          setOrders(oSnap.docs.map(d => ({ id: d.id, ...d.data() } as Order)));
-          
-          const qMagasin = query(collection(db, "magasin"), where("coopId", "==", appUser.coopId));
-          const sSnap = await getDocs(qMagasin);
-          setStock(sSnap.docs.map(d => ({ id: d.id, ...d.data() } as StockTransaction)));
-          
-          const qRecoltes = query(collection(db, "recoltes"), where("coopId", "==", appUser.coopId));
-          const hSnap = await getDocs(qRecoltes);
-          setHarvests(hSnap.docs.map(d => ({ id: d.id, ...d.data() } as Harvest)));
+          // C. Écoute des membres
+          const unsubMembres = onSnapshot(query(collection(db, "membres"), where("coopId", "==", uData.coopId)), (snap) => {
+            setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() } as Member)));
+          });
+          unsubs.push(unsubMembres);
 
-        } catch (error) { 
-          console.error("Erreur de chargement des données (Cache vide ?)", error); 
+          // D. Écoute des commandes
+          const unsubCommandes = onSnapshot(query(collection(db, "commandes"), where("coopId", "==", uData.coopId)), (snap) => {
+            setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() } as Order)));
+          });
+          unsubs.push(unsubCommandes);
+
+          // E. Écoute du magasin
+          const unsubMagasin = onSnapshot(query(collection(db, "magasin"), where("coopId", "==", uData.coopId)), (snap) => {
+            setStock(snap.docs.map(d => ({ id: d.id, ...d.data() } as StockTransaction)));
+          });
+          unsubs.push(unsubMagasin);
+
+          // F. Écoute des récoltes
+          const unsubRecoltes = onSnapshot(query(collection(db, "recoltes"), where("coopId", "==", uData.coopId)), (snap) => {
+            setHarvests(snap.docs.map(d => ({ id: d.id, ...d.data() } as Harvest)));
+          });
+          unsubs.push(unsubRecoltes);
         }
-      };
-      fetchData();
-    }
-  }, [isLoggedIn, appUser, isOffline]);
+      }
+    }, (error) => {
+      console.warn("Mode Hors ligne strict ou problème d'accès :", error);
+    });
+
+    unsubs.push(unsubUser);
+
+    return () => {
+      unsubs.forEach(unsub => unsub()); // Nettoyage à la déconnexion
+    };
+  }, [isLoggedIn]);
+
+  // 3. RÉCUPÉRATION DE LA MÉTÉO SÉPARÉE (Ne tourne que quand les coordonnées changent ou qu'internet revient)
+  useEffect(() => {
+    const fetchWeather = async () => {
+      if (coopProfile?.lat && coopProfile?.lng && !isOffline) {
+        try {
+          const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${coopProfile.lat}&longitude=${coopProfile.lng}&current_weather=true&daily=precipitation_probability_max,precipitation_sum&timezone=Africa%2FAbidjan&models=best_match&forecast_days=3`);
+          if (!weatherRes.ok) throw new Error("API Météo indisponible");
+          
+          const wData = await weatherRes.json();
+          let locName = coopProfile.nom; 
+          
+          try {
+            const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${coopProfile.lat}&lon=${coopProfile.lng}&zoom=10`, { headers: { 'Accept-Language': 'fr' }});
+            const geoData = await geoRes.json();
+            if (geoData?.address) locName = geoData.address.city || geoData.address.town || geoData.address.village || locName;
+          } catch(e) { /* Ignorer erreur de nom de ville */ }
+
+          const alerts = wData.daily?.time?.map((t: string, i: number) => ({
+            date: t,
+            prob: wData.daily.precipitation_probability_max?.[i] || 0,
+            sum: wData.daily.precipitation_sum?.[i] || 0
+          })) || [];
+
+          setWeather({ temp: wData.current_weather?.temperature || 0, isSunny: wData.current_weather?.weathercode <= 3, locationName: locName, alerts });
+          setWeatherError(false);
+        } catch(e) {
+           setWeatherError(true);
+        }
+      } else if (isOffline) {
+        setWeatherError(true);
+      }
+    };
+
+    fetchWeather();
+  }, [coopProfile?.lat, coopProfile?.lng, isOffline]);
 
   const calculateProjections = () => {
     if (!coopProfile) return { totalRendement: 0, totalRevenu: 0 };
@@ -330,7 +342,7 @@ const CoopDashboard: React.FC = () => {
     let totalRevenu = 0;
     members.forEach(m => {
       const surface = parseFloat(m.surface || '0');
-      const cropConfig = coopProfile.cultures.find(c => c.nom.toLowerCase() === m.culture?.toLowerCase());
+      const cropConfig = coopProfile.cultures?.find(c => c.nom.toLowerCase() === m.culture?.toLowerCase());
       if (cropConfig && surface > 0) {
         const prod = surface * cropConfig.rendementHa;
         totalRendement += prod;
@@ -346,54 +358,35 @@ const CoopDashboard: React.FC = () => {
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isOffline) return alert("La première connexion nécessite internet. Veuillez vous connecter au réseau.");
+    if (isOffline) return alert("La première connexion ou la création de compte nécessite internet.");
     
     try {
       if (authMode === 'register_admin') {
         const userCred = await createUserWithEmailAndPassword(auth, credentials.email, credentials.password);
         const newCoopId = "COOP-" + Math.random().toString(36).substr(2, 9).toUpperCase();
         
+        // SUPPRESSION DES FAUSSES DONNÉES : La coopérative démarre à zéro
         await setDoc(doc(db, "cooperatives", newCoopId), {
           nom: registerData.nomCoop || "Ma Coopérative",
           lat: registerData.lat,
           lng: registerData.lng,
-          cultures: [
-            { nom: "Cacao", rendementHa: 0.5, prixTonne: 1500000 },
-            { nom: "Anacarde", rendementHa: 0.8, prixTonne: 400000 },
-            { nom: "Riz", rendementHa: 3, prixTonne: 300000 },
-            { nom: "Hévéa", rendementHa: 1.5, prixTonne: 300000 },
-            { nom: "Coton", rendementHa: 1.2, prixTonne: 300000 },
-            { nom: "Maïs", rendementHa: 2, prixTonne: 150000 },
-            { nom: "Manioc", rendementHa: 15, prixTonne: 25000 }
-          ] 
+          cultures: [] // À paramétrer manuellement par l'admin
         });
         
-        await setDoc(doc(db, "users", userCred.user.uid), {
-          uid: userCred.user.uid,
-          email: credentials.email,
-          role: 'admin',
-          coopId: newCoopId
-        });
-
+        await setDoc(doc(db, "users", userCred.user.uid), { uid: userCred.user.uid, email: credentials.email, role: 'admin', coopId: newCoopId });
       } else if (authMode === 'register_agent') {
         if (!registerData.coopIdToJoin) return alert("Veuillez entrer le Code de la coopérative.");
         const coopDoc = await getDoc(doc(db, "cooperatives", registerData.coopIdToJoin));
         if (!coopDoc.exists()) return alert("Code coopérative introuvable !");
 
         const userCred = await createUserWithEmailAndPassword(auth, credentials.email, credentials.password);
-        await setDoc(doc(db, "users", userCred.user.uid), {
-          uid: userCred.user.uid,
-          email: credentials.email,
-          role: 'agent',
-          coopId: registerData.coopIdToJoin
-        });
-
+        await setDoc(doc(db, "users", userCred.user.uid), { uid: userCred.user.uid, email: credentials.email, role: 'agent', coopId: registerData.coopIdToJoin });
       } else {
         await signInWithEmailAndPassword(auth, credentials.email, credentials.password);
       }
     } catch (error: unknown) { 
         const msg = error instanceof Error ? error.message : "Erreur inconnue";
-        alert("Erreur : " + msg); 
+        alert("Erreur d'authentification : " + msg); 
     }
   };
 
@@ -401,20 +394,15 @@ const CoopDashboard: React.FC = () => {
     setIsLocating(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => { setRegisterData(prev => ({ ...prev, lat: pos.coords.latitude, lng: pos.coords.longitude })); setIsLocating(false); },
-      (err) => { console.error(err); alert("Impossible d'obtenir la position."); setIsLocating(false); }
+      (err) => { console.error(err); alert("Impossible d'obtenir la position GPS."); setIsLocating(false); }
     );
   };
 
   const handleScanSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const found = members.find(m => m.id === scanData);
-    if (found) {
-      setSearchTerm(found.nom);
-      setShowScanner(false);
-      setScanData('');
-    } else {
-      alert("Code QR non reconnu dans votre base de données.");
-    }
+    if (found) { setSearchTerm(found.nom); setShowScanner(false); setScanData(''); } 
+    else { alert("Code QR non reconnu dans la base."); }
   };
 
   const copyToClipboard = () => {
@@ -425,33 +413,77 @@ const CoopDashboard: React.FC = () => {
     }
   };
 
+  // ACTIONS (Ajout / Suppression) : Gérées nativement par Firebase hors-ligne
   const addNewCrop = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!coopProfile || !appUser) return;
     if (!newCrop.nom) return alert("Le nom est requis.");
     
-    const updatedCultures = [...coopProfile.cultures, newCrop];
+    const updatedCultures = [...(coopProfile.cultures || []), newCrop];
     try {
       await updateDoc(doc(db, "cooperatives", appUser.coopId), { cultures: updatedCultures });
-      setCoopProfile({ ...coopProfile, cultures: updatedCultures });
       setNewCrop({ nom: '', rendementHa: 0, prixTonne: 0 });
-      alert("Paramètres mis à jour !");
-    } catch (err) { 
-        console.error(err);
-        alert("Erreur. Si vous êtes hors ligne, l'ajout se synchronisera plus tard."); 
-    }
+    } catch (err) { alert("Si vous êtes hors-ligne, l'ajout se synchronisera plus tard."); }
   };
 
   const removeCrop = async (index: number) => {
     if (!coopProfile || !appUser) return;
     if (window.confirm("Supprimer cette culture ?")) {
-      const updatedCultures = coopProfile.cultures.filter((_, i) => i !== index);
+      const updatedCultures = (coopProfile.cultures || []).filter((_, i) => i !== index);
       try {
         await updateDoc(doc(db, "cooperatives", appUser.coopId), { cultures: updatedCultures });
-        setCoopProfile({ ...coopProfile, cultures: updatedCultures });
       } catch (err) { console.error(err); }
     }
   };
+
+  const deleteDocGen = async (collectionName: string, id: string) => { 
+    if(window.confirm("Supprimer définitivement cet élément ?")) { 
+      try { 
+        await deleteDoc(doc(db, collectionName, id)); 
+        // Pas besoin de filtrer manuellement `setMembers` ou autre, onSnapshot s'en charge !
+      } catch (err) { console.warn("Mise en attente de la suppression (Mode hors-ligne)."); } 
+    } 
+  };
+
+  const addMemberFromWizard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!appUser?.coopId) return;
+    try {
+      const memberToSave = { ...newMember, coopId: appUser.coopId, statut: "Actif" };
+      const docRef = await addDoc(collection(db, "membres"), memberToSave);
+      setWizardStep(0); 
+      setActiveTab('members');
+      setReceiptMember({ id: docRef.id, ...memberToSave } as Member);
+    } catch (err) { alert("L'enregistrement a échoué."); }
+  };
+
+  const addOrder = async (e: React.FormEvent) => { 
+    e.preventDefault(); 
+    if(!appUser?.coopId) return; 
+    try { 
+      await addDoc(collection(db, "commandes"), { ...newOrder, coopId: appUser.coopId, statut: "En attente" }); 
+      setShowForm(false); setNewOrder({ produit: '', qte: '', date: '', cout: '' });
+    } catch (err) { console.error(err); } 
+  };
+
+  const addStockTransaction = async (e: React.FormEvent) => { 
+    e.preventDefault(); 
+    if(!appUser?.coopId) return; 
+    try { 
+      await addDoc(collection(db, "magasin"), { ...newStock, coopId: appUser.coopId}); 
+      setShowForm(false); setNewStock({ type: 'entree', produit: '', qte: '', date: '', cout: '', acteur: '' });
+    } catch (err) { console.error(err); } 
+  };
+
+  const addHarvestTransaction = async (e: React.FormEvent) => { 
+    e.preventDefault(); 
+    if(!appUser?.coopId) return; 
+    try { 
+      await addDoc(collection(db, "recoltes"), { ...newHarvest, coopId: appUser.coopId}); 
+      setShowForm(false); setNewHarvest({ type: 'recolte', culture: '', qte: 0, date: new Date().toISOString().split('T')[0], montant: 0, acteur: '' });
+    } catch (err) { console.error(err); } 
+  };
+
 
   useEffect(() => {
     if (wizardStep === 1) {
@@ -486,9 +518,12 @@ const CoopDashboard: React.FC = () => {
   const startWizard = () => {
     setParcelPoints([]);
     setIsCustomCulture(false);
+    
+    const defaultCulture = (coopProfile?.cultures && coopProfile.cultures.length > 0) ? coopProfile.cultures[0].nom : '';
+
     setNewMember({ 
       nom: '', village: '', 
-      culture: coopProfile?.cultures.length ? coopProfile.cultures[0].nom : '', 
+      culture: defaultCulture, 
       sousCulture: '',
       surface: '', date: new Date().toISOString().split('T')[0], cout: '5000' 
     });
@@ -510,34 +545,9 @@ const CoopDashboard: React.FC = () => {
       setNewMember(prev => ({ ...prev, surface: areaInHa, parcelle: parcelPoints, gps: { lat: center.geometry.coordinates[1], lng: center.geometry.coordinates[0] } }));
       setWizardStep(2);
     } catch (e) { 
-        console.error(e);
         alert("Erreur géométrique. Les lignes se croisent-elles ?"); 
     }
   };
-
-  const addMemberFromWizard = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!appUser) return;
-    try {
-      const memberToSave = { ...newMember, coopId: appUser.coopId, statut: "Actif" };
-      const docRef = await addDoc(collection(db, "membres"), memberToSave);
-      
-      const completeMember = { id: docRef.id, ...memberToSave } as Member;
-      setMembers([completeMember, ...members]);
-      setWizardStep(0); 
-      setActiveTab('members');
-      setReceiptMember(completeMember);
-    } catch (err) { 
-        console.error(err);
-        alert("Erreur d'enregistrement."); 
-    }
-  };
-
-  const addOrder = async (e: React.FormEvent) => { e.preventDefault(); if(!appUser) return; try { const docRef = await addDoc(collection(db, "commandes"), { ...newOrder, coopId: appUser.coopId, statut: "En attente" }); setOrders([{ id: docRef.id, ...newOrder, coopId: appUser.coopId, statut: "En attente" } as Order, ...orders]); setShowForm(false); } catch (err) { console.error(err); alert("Erreur commande."); } };
-  const addStockTransaction = async (e: React.FormEvent) => { e.preventDefault(); if(!appUser) return; try { const docRef = await addDoc(collection(db, "magasin"), { ...newStock, coopId: appUser.coopId}); setStock([{ id: docRef.id, ...newStock, coopId: appUser.coopId } as StockTransaction, ...stock]); setShowForm(false); } catch (err) { console.error(err); alert("Erreur magasin."); } };
-  const addHarvestTransaction = async (e: React.FormEvent) => { e.preventDefault(); if(!appUser) return; try { const docRef = await addDoc(collection(db, "recoltes"), { ...newHarvest, coopId: appUser.coopId}); setHarvests([{ id: docRef.id, ...newHarvest, coopId: appUser.coopId } as Harvest, ...harvests]); setShowForm(false); } catch (err) { console.error(err); alert("Erreur récolte/vente."); } };
-  
-  const deleteDocGen = async <T extends { id: string }>(collectionName: string, id: string, setter: React.Dispatch<React.SetStateAction<T[]>>, state: T[]) => { if(window.confirm("Supprimer définitivement ?")) { try { await deleteDoc(doc(db, collectionName, id)); setter(state.filter(item => item.id !== id)); } catch (err) { console.error(err); alert("Erreur. La suppression se fera au retour du réseau."); } } };
 
   const exportToExcel = () => {
     let dataToExport;
@@ -680,7 +690,7 @@ const CoopDashboard: React.FC = () => {
         )}
 
         <div className="flex-1 relative mt-[-1rem] rounded-3xl overflow-hidden z-[200]">
-          <MapContainer ref={setMapRef} center={coopProfile ? [coopProfile.lat, coopProfile.lng] : [9.5222, -6.4869]} zoom={12} style={{ height: '100%', width: '100%' }} zoomControl={false}>
+          <MapContainer ref={setMapRef} center={coopProfile?.lat ? [coopProfile.lat, coopProfile.lng] : [9.5222, -6.4869]} zoom={12} style={{ height: '100%', width: '100%' }} zoomControl={false}>
             <TileLayer url="https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}" maxZoom={20} subdomains={['mt0','mt1','mt2','mt3']} />
             <MapController onMapClick={addManualPoint} />
             {currentLocation && <Marker position={[currentLocation.lat, currentLocation.lng]} icon={userLocationIcon} />}
@@ -768,12 +778,12 @@ const CoopDashboard: React.FC = () => {
                   }
                 }}>
                 <option value="" disabled>Choisir dans la liste...</option>
-                {coopProfile?.cultures.map((c, idx) => (<option key={idx} value={c.nom}>{c.nom}</option>))}
+                {coopProfile?.cultures?.map((c, idx) => (<option key={idx} value={c.nom}>{c.nom}</option>))}
                 <option value="autre" className="font-bold text-emerald-700">➕ Autre (Préciser...)</option>
               </select>
             </div>
 
-            {/* SELECTION TYPE DE RIZ (Nouveauté) */}
+            {/* SELECTION TYPE DE RIZ */}
             {isRizSelected && !isCustomCulture && (
               <div className="space-y-2 animate-in fade-in slide-in-from-top-2 p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
                 <label aria-label="Type de riz" className="text-sm font-bold text-blue-800">Quel est l'écosystème du riz ?</label>
@@ -793,7 +803,6 @@ const CoopDashboard: React.FC = () => {
               <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
                 <label className="text-sm font-bold text-emerald-600 px-2">Précisez la culture</label>
                 <input required placeholder="Ex: Tomate, etc." className="w-full p-4 bg-emerald-50/50 rounded-2xl border border-emerald-200 focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-bold text-lg text-emerald-900" value={newMember.culture} onChange={e => setNewMember({...newMember, culture: e.target.value})} />
-                <p className="text-xs font-medium text-amber-600 px-2 flex items-center gap-1 mt-1"><AlertTriangle size={12}/> Pensez à ajouter cette culture dans "Paramètres" plus tard pour vos calculs financiers.</p>
               </div>
             )}
 
@@ -809,7 +818,6 @@ const CoopDashboard: React.FC = () => {
   const filteredStock = stock.filter(s => s.produit.toLowerCase().includes(searchTerm.toLowerCase()));
   const filteredHarvests = harvests.filter(h => h.culture.toLowerCase().includes(searchTerm.toLowerCase()) || (h.acteur && h.acteur.toLowerCase().includes(searchTerm.toLowerCase())));
   
-  // ALERTE METEO AGRONOMIQUE
   const getAgronomicWeatherAlert = () => {
     if (!weather || !weather.alerts || weather.alerts.length === 0) return null;
     const today = weather.alerts[0];
@@ -825,13 +833,12 @@ const CoopDashboard: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#EAE6DF] pb-28 font-sans">
       
-      {/* MODAL DE REÇU AVEC QR CODE & PRESCRIPTION AGRONOMIQUE */}
       {receiptMember && (
         <div className="fixed inset-0 bg-stone-900/80 flex items-center justify-center p-4 z-[500] backdrop-blur-sm overflow-y-auto">
           <div className="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl relative my-8">
             <div className="bg-[#1b4332] p-6 text-center relative overflow-hidden">
               <div className="absolute -right-4 -top-4 opacity-10"><MapIcon size={100} /></div>
-              <h3 className="font-black text-2xl text-white relative z-10">{coopProfile?.nom}</h3>
+              <h3 className="font-black text-2xl text-white relative z-10">{coopProfile?.nom || "Coopérative"}</h3>
               <p className="text-emerald-200/80 text-xs font-bold uppercase tracking-widest mt-1">Reçu d'enregistrement</p>
             </div>
             
@@ -851,10 +858,9 @@ const CoopDashboard: React.FC = () => {
                <div><p className="text-xs font-bold text-stone-400 uppercase tracking-wide">Surface</p><p className="font-bold text-emerald-600 text-2xl mt-1">{receiptMember.surface} ha</p></div>
             </div>
 
-            {/* PRESCRIPTION AGRONOMIQUE */}
             {adviceForReceipt && (
               <div className="p-6 bg-emerald-50/50">
-                <p className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider mb-4 flex items-center gap-2 justify-center"><Sprout size={14}/> Prescription / Besoins Estimés</p>
+                <p className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider mb-4 flex items-center gap-2 justify-center"><Leaf size={14}/> Prescription / Besoins Estimés</p>
                 <div className="grid grid-cols-3 gap-3 text-center">
                   <div className="bg-white py-3 px-2 rounded-2xl shadow-sm border border-emerald-100">
                     <p className="text-[10px] text-stone-500 font-bold uppercase mb-1">Semences</p>
@@ -882,7 +888,6 @@ const CoopDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* MODAL SCANNER QR */}
       {showScanner && (
         <div className="fixed inset-0 bg-stone-900/80 flex items-center justify-center p-4 z-[500] backdrop-blur-sm">
           <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 text-center shadow-2xl">
@@ -901,7 +906,6 @@ const CoopDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* En-tête Organique */}
       <div className="bg-[#1b4332] text-white shadow-md rounded-b-[2.5rem] pb-10 pt-8 mb-[-2rem] relative z-10">
         <div className="max-w-7xl mx-auto px-6 flex justify-between items-start">
           <div>
@@ -918,7 +922,6 @@ const CoopDashboard: React.FC = () => {
 
       <div className="max-w-7xl mx-auto px-4 mt-6 relative z-20">
         
-        {/* Navigation Desktop */}
         <div className="hidden md:flex bg-white/80 backdrop-blur-md rounded-2xl shadow-sm mb-8 p-2 border border-white overflow-x-auto gap-2 max-w-fit mx-auto">
           <button onClick={() => setActiveTab('overview')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'overview' ? 'bg-[#1b4332] text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><TrendingUp size={18}/> Résumé</button>
           <button onClick={() => setActiveTab('members')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'members' ? 'bg-[#1b4332] text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><Users size={18}/> Producteurs</button>
@@ -1029,7 +1032,7 @@ const CoopDashboard: React.FC = () => {
                         </div>
                         <div className="flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                           <button aria-label="Voir le code QR" onClick={() => setReceiptMember(m)} className="text-stone-400 hover:text-emerald-600 hover:bg-emerald-50 p-3 rounded-2xl transition-all" title="Afficher le reçu"><QrCode size={20} /></button>
-                          {appUser?.role === 'admin' && <button aria-label="Supprimer" onClick={() => deleteDocGen("membres", m.id, setMembers, members)} className="text-stone-300 hover:text-rose-500 hover:bg-rose-50 p-3 rounded-2xl transition-all"><Trash2 size={20} /></button>}
+                          {appUser?.role === 'admin' && <button aria-label="Supprimer" onClick={() => deleteDocGen("membres", m.id)} className="text-stone-300 hover:text-rose-500 hover:bg-rose-50 p-3 rounded-2xl transition-all"><Trash2 size={20} /></button>}
                         </div>
                       </div>
                     ))}
@@ -1049,7 +1052,7 @@ const CoopDashboard: React.FC = () => {
                             <div className="flex gap-2"><span className="text-xs font-bold text-stone-500 bg-stone-200 px-2 py-1 rounded-lg">📅 {h.date}</span>{h.type === 'vente' && <span className="text-xs font-bold text-amber-700 bg-amber-100 px-2 py-1 rounded-lg">💰 {h.montant?.toLocaleString()} FCFA</span>}</div>
                           </div>
                         </div>
-                        {appUser?.role === 'admin' && <button onClick={() => deleteDocGen("recoltes", h.id, setHarvests, harvests)} aria-label="Supprimer" className="text-stone-300 hover:text-rose-500 hover:bg-rose-50 p-3 rounded-2xl transition-all"><Trash2 size={20} /></button>}
+                        {appUser?.role === 'admin' && <button onClick={() => deleteDocGen("recoltes", h.id)} aria-label="Supprimer" className="text-stone-300 hover:text-rose-500 hover:bg-rose-50 p-3 rounded-2xl transition-all"><Trash2 size={20} /></button>}
                       </div>
                     ))}
                   </div>
@@ -1068,7 +1071,7 @@ const CoopDashboard: React.FC = () => {
                             <div className="flex gap-2"><span className="text-xs font-bold text-stone-500 bg-stone-200 px-2 py-1 rounded-lg">📅 {s.date}</span><span className="text-xs font-bold text-purple-700 bg-purple-100 px-2 py-1 rounded-lg">🏷️ {s.cout} FCFA</span></div>
                           </div>
                         </div>
-                        {appUser?.role === 'admin' && <button onClick={() => deleteDocGen("magasin", s.id, setStock, stock)} aria-label="Supprimer" className="text-stone-300 hover:text-rose-500 hover:bg-rose-50 p-3 rounded-2xl transition-all"><Trash2 size={20} /></button>}
+                        {appUser?.role === 'admin' && <button onClick={() => deleteDocGen("magasin", s.id)} aria-label="Supprimer" className="text-stone-300 hover:text-rose-500 hover:bg-rose-50 p-3 rounded-2xl transition-all"><Trash2 size={20} /></button>}
                       </div>
                     ))}
                   </div>
@@ -1084,7 +1087,7 @@ const CoopDashboard: React.FC = () => {
                           <p className="text-sm font-bold text-emerald-700 mt-1 mb-2">{o.cout} FCFA</p>
                           <div className="flex items-center gap-3 text-xs font-bold"><span className="text-stone-500 bg-stone-200 px-2 py-1 rounded-lg">📅 {o.date}</span><span className="text-amber-600 bg-amber-100 px-2 py-1 rounded-lg flex items-center gap-1"><Clock size={12} /> {o.statut}</span></div>
                         </div>
-                        {appUser?.role === 'admin' && <button onClick={() => deleteDocGen("commandes", o.id, setOrders, orders)} aria-label="Supprimer" className="text-stone-300 hover:text-rose-500 hover:bg-rose-50 p-3 rounded-2xl transition-all"><Trash2 size={20} /></button>}
+                        {appUser?.role === 'admin' && <button onClick={() => deleteDocGen("commandes", o.id)} aria-label="Supprimer" className="text-stone-300 hover:text-rose-500 hover:bg-rose-50 p-3 rounded-2xl transition-all"><Trash2 size={20} /></button>}
                       </div>
                     ))}
                   </div>
@@ -1119,13 +1122,13 @@ const CoopDashboard: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="bg-stone-50 p-6 rounded-3xl border border-stone-100">
                       <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-1">Nom de la Coopérative</p>
-                      <p className="text-xl font-black text-stone-800">{coopProfile?.nom}</p>
+                      <p className="text-xl font-black text-stone-800">{coopProfile?.nom || "Non défini"}</p>
                     </div>
                     
                     <div className="bg-emerald-50 p-6 rounded-3xl border border-emerald-100 relative overflow-hidden">
                       <p className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-1">Code d'invitation (Coop ID)</p>
                       <div className="flex items-center justify-between">
-                        <p className="text-2xl font-mono font-black text-emerald-800">{appUser?.coopId}</p>
+                        <p className="text-2xl font-mono font-black text-emerald-800">{appUser?.coopId || "Aucun"}</p>
                         <button onClick={copyToClipboard} className="p-2 bg-white rounded-xl shadow-sm text-emerald-600 hover:bg-emerald-600 hover:text-white transition-colors" title="Copier le code">
                           {copied ? <Check size={20} /> : <Copy size={20} />}
                         </button>
@@ -1140,7 +1143,7 @@ const CoopDashboard: React.FC = () => {
 
                     <div className="bg-stone-50 p-6 rounded-3xl border border-stone-100">
                       <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-1">Siège (Coordonnées GPS)</p>
-                      <p className="text-lg font-bold text-stone-700">{coopProfile?.lat?.toFixed(4)}, {coopProfile?.lng?.toFixed(4)}</p>
+                      <p className="text-lg font-bold text-stone-700">{coopProfile?.lat?.toFixed(4) || "0"}, {coopProfile?.lng?.toFixed(4) || "0"}</p>
                     </div>
                   </div>
                 </div>
@@ -1164,7 +1167,7 @@ const CoopDashboard: React.FC = () => {
                   )}
 
                   <div className="grid gap-4">
-                    {coopProfile?.cultures.map((c, idx) => (
+                    {coopProfile?.cultures?.map((c, idx) => (
                       <div key={idx} className="flex justify-between items-center p-5 border border-stone-100 rounded-3xl bg-white hover:border-emerald-200 transition-colors">
                         <div>
                           <p className="font-black text-xl text-stone-800 mb-1">{c.nom}</p>
@@ -1188,16 +1191,16 @@ const CoopDashboard: React.FC = () => {
                     <div className="p-3 bg-blue-50 rounded-2xl text-blue-600"><MapIcon size={24}/></div>
                     <h2 className="text-2xl font-black text-stone-800 tracking-tight">Cadastre</h2>
                   </div>
-                  {isOffline && <div className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-2 rounded-xl flex items-center gap-2"><span title="Hors Ligne"><WifiOff size={14} /></span> Carte HD bloquée en hors-ligne</div>}
+                  {isOffline && <div className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-2 rounded-xl flex items-center gap-2"><span title="Hors Ligne"><WifiOff size={14} /></span> Carte HD bloquée</div>}
                 </div>
                 
                 <div key={`map-container-${activeTab}`} className="flex-1 rounded-[2rem] overflow-hidden border-2 border-stone-100 z-0 relative shadow-inner">
                   {coopProfile && (
-                    <MapContainer center={[coopProfile.lat, coopProfile.lng]} zoom={10} style={{ height: '100%', width: '100%' }}>
+                    <MapContainer center={coopProfile?.lat ? [coopProfile.lat, coopProfile.lng] : [9.5222, -6.4869]} zoom={10} style={{ height: '100%', width: '100%' }}>
                       <TileLayer url="https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}" maxZoom={20} subdomains={['mt0','mt1','mt2','mt3']} />
                       
                       <MapInvalidator />
-                      <AutoFitBounds members={members} defaultCenter={{lat: coopProfile.lat, lng: coopProfile.lng}} />
+                      <AutoFitBounds members={members} defaultCenter={{lat: coopProfile.lat || 9.5222, lng: coopProfile.lng || -6.4869}} />
                       
                       {members.map((m) => (
                         <React.Fragment key={m.id}>
@@ -1223,7 +1226,7 @@ const CoopDashboard: React.FC = () => {
                                   <div className="text-sm min-w-[160px] p-1 font-sans">
                                     <strong className="text-xl font-black text-stone-800 block mb-2">{m.nom}</strong>
                                     <p className="mb-1 text-stone-600 font-medium"><strong>Village :</strong> {m.village}</p>
-                                    <p className="text-xs text-amber-600 bg-amber-50 p-2 rounded-lg font-bold text-center mt-3">📍 Coordonnées GPS simples (Aucun tracé)</p>
+                                    <p className="text-xs text-amber-600 bg-amber-50 p-2 rounded-lg font-bold text-center mt-3">📍 Coordonnées GPS simples</p>
                                   </div>
                                 </Popup>
                               </Marker>
@@ -1241,7 +1244,7 @@ const CoopDashboard: React.FC = () => {
           {/* LA COLONNE DE DROITE (BARRE LATÉRALE) */}
           <div className="space-y-8 mt-4 lg:mt-0">
             
-            {/* Widget Météo Complet avec Alertes 3 jours */}
+            {/* Widget Météo Complet */}
             <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-8 rounded-[2.5rem] border border-blue-100 relative overflow-hidden shadow-sm">
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/40 rounded-full blur-2xl -translate-y-1/2 translate-x-1/4"></div>
               
@@ -1249,7 +1252,7 @@ const CoopDashboard: React.FC = () => {
               
               {isOffline ? (
                 <div className="bg-white/60 p-4 rounded-3xl backdrop-blur-sm border border-amber-100 text-amber-700 text-sm font-bold flex flex-col items-center text-center gap-2">
-                  <WifiOff size={24} className="text-amber-500"/> Météo indisponible hors ligne. Synchronisation à votre retour au bureau.
+                  <WifiOff size={24} className="text-amber-500"/> Météo indisponible hors ligne. Synchronisation à votre retour.
                 </div>
               ) : weatherError ? (
                 <div className="bg-white/60 p-4 rounded-3xl backdrop-blur-sm border border-red-100 text-red-600 text-sm font-bold text-center">
@@ -1281,7 +1284,6 @@ const CoopDashboard: React.FC = () => {
                       ))}
                     </div>
                     
-                    {/* ALERTE MÉTÉO AGRONOMIQUE INTÉGRÉE */}
                     {agronomicAlert && (
                       <div className={`p-4 rounded-2xl text-sm font-bold leading-relaxed border ${agronomicAlert.type === 'danger' ? 'bg-red-50 text-red-800 border-red-100' : 'bg-emerald-50 text-emerald-800 border-emerald-100'}`}>
                         {agronomicAlert.text}
@@ -1302,10 +1304,10 @@ const CoopDashboard: React.FC = () => {
               </div>
               <div className="flex-1 rounded-[1.5rem] overflow-hidden border border-stone-100 z-0 relative shadow-inner">
                 {coopProfile && (
-                  <MapContainer center={[coopProfile.lat, coopProfile.lng]} zoom={10} style={{ height: '100%', width: '100%' }}>
+                  <MapContainer center={coopProfile?.lat ? [coopProfile.lat, coopProfile.lng] : [9.5222, -6.4869]} zoom={10} style={{ height: '100%', width: '100%' }}>
                     <TileLayer url="https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}" maxZoom={20} subdomains={['mt0','mt1','mt2','mt3']} />
                     <MapInvalidator />
-                    <AutoFitBounds members={members} defaultCenter={{lat: coopProfile.lat, lng: coopProfile.lng}} />
+                    <AutoFitBounds members={members} defaultCenter={{lat: coopProfile.lat || 9.5222, lng: coopProfile.lng || -6.4869}} />
                     {members.map((m) => (
                       <React.Fragment key={`mini-${m.id}`}>
                         {m.parcelle && m.parcelle.length > 0 ? (
@@ -1314,7 +1316,7 @@ const CoopDashboard: React.FC = () => {
                             <Popup>
                               <div className="text-sm min-w-[150px] p-1 font-sans">
                                 <strong className="text-lg font-black text-stone-800 block mb-1">{m.nom}</strong>
-                                <p className="text-stone-600 font-medium mb-1">{m.village} • {m.culture} {m.sousCulture && `(${m.sousCulture})`}</p>
+                                <p className="text-stone-600 font-medium mb-1">{m.village} • {m.culture}</p>
                                 <p className="text-emerald-600 font-bold bg-emerald-50 px-2 py-1 rounded-md inline-block">{m.surface} ha</p>
                               </div>
                             </Popup>
@@ -1367,7 +1369,7 @@ const CoopDashboard: React.FC = () => {
                   <label className="text-sm font-bold text-stone-500 px-2">Quelle culture ?</label>
                   <select required aria-label="Sélectionner la culture" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:ring-2 focus:ring-amber-500 font-medium text-stone-800" value={newHarvest.culture} onChange={e => setNewHarvest({...newHarvest, culture: e.target.value})}>
                     <option value="" disabled>Choisir dans la liste...</option>
-                    {coopProfile?.cultures.map((c, idx) => <option key={idx} value={c.nom}>{c.nom}</option>)}
+                    {coopProfile?.cultures?.map((c, idx) => <option key={idx} value={c.nom}>{c.nom}</option>)}
                   </select>
                 </div>
                 
