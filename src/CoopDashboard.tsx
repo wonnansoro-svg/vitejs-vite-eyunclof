@@ -6,7 +6,7 @@ import {
   Package, ArrowDownToLine, ArrowUpFromLine, Check, 
   Play, Square, Undo, Navigation, MapPin, 
   Settings, Target, MapPin as MapPinDrop,
-  Wheat, Coins, Leaf, QrCode, Scan, Printer, KeyRound, AlertTriangle, Copy, WifiOff, Sprout
+  Wheat, Coins, Leaf, QrCode, Scan, Printer, KeyRound, AlertTriangle, Copy, WifiOff
 } from 'lucide-react';
 
 import * as XLSX from 'xlsx';
@@ -44,7 +44,8 @@ const vertexIcon = new L.Icon({
 
 // --- CONFIGURATION FIREBASE ---
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, deleteDoc, doc, setDoc, updateDoc, query, where, enableIndexedDbPersistence, onSnapshot } from 'firebase/firestore';
+// CORRECTION : Réintégration de getDoc et getDocs
+import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, setDoc, getDoc, updateDoc, query, where, enableIndexedDbPersistence, onSnapshot } from 'firebase/firestore';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 
 const firebaseConfig = {
@@ -225,13 +226,11 @@ const CoopDashboard: React.FC = () => {
   const [newCrop, setNewCrop] = useState<CropConfig>({ nom: '', rendementHa: 0, prixTonne: 0 });
   const [newHarvest, setNewHarvest] = useState<Partial<Harvest>>({ type: 'recolte', culture: '', qte: 0, date: new Date().toISOString().split('T')[0], montant: 0, acteur: '' });
 
-  // 1. AUTHENTIFICATION
+  // 1. AUTHENTIFICATION SÉCURISÉE
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
-        // En mode hors ligne strict sans cache initial, l'utilisateur existe dans l'objet auth
-        // mais le doc user peut ne pas être lu. onSnapshot s'en chargera dans le useEffect suivant.
-        setAppUser({ uid: user.uid, email: user.email || '', role: 'agent', coopId: '' }); // Profil temporaire
+        setAppUser({ uid: user.uid, email: user.email || '', role: 'agent', coopId: '' }); // Profil temporaire écrasé par onSnapshot
         setIsLoggedIn(true);
       } else {
         setIsLoggedIn(false);
@@ -243,20 +242,18 @@ const CoopDashboard: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // 2. SYNCHRONISATION TEMPS RÉEL DE TOUTES LES DONNÉES (PHASE PILOTE)
+  // 2. SYNCHRONISATION TEMPS RÉEL DE TOUTES LES DONNÉES
   useEffect(() => {
     if (!isLoggedIn || !auth.currentUser) return;
 
     const unsubs: (() => void)[] = [];
 
-    // A. Écoute de l'utilisateur connecté pour avoir son vrai rôle et coopId
     const unsubUser = onSnapshot(doc(db, "users", auth.currentUser.uid), (docSnap) => {
       if (docSnap.exists()) {
         const uData = docSnap.data() as AppUser;
         setAppUser(uData);
 
         if (uData.coopId) {
-          // B. Écoute du profil de la coopérative
           const unsubProfile = onSnapshot(doc(db, "cooperatives", uData.coopId), (profileSnap) => {
             if (profileSnap.exists()) {
               setCoopProfile({ id: profileSnap.id, ...profileSnap.data() } as CoopProfile);
@@ -264,25 +261,21 @@ const CoopDashboard: React.FC = () => {
           });
           unsubs.push(unsubProfile);
 
-          // C. Écoute des membres
           const unsubMembres = onSnapshot(query(collection(db, "membres"), where("coopId", "==", uData.coopId)), (snap) => {
             setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() } as Member)));
           });
           unsubs.push(unsubMembres);
 
-          // D. Écoute des commandes
           const unsubCommandes = onSnapshot(query(collection(db, "commandes"), where("coopId", "==", uData.coopId)), (snap) => {
             setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() } as Order)));
           });
           unsubs.push(unsubCommandes);
 
-          // E. Écoute du magasin
           const unsubMagasin = onSnapshot(query(collection(db, "magasin"), where("coopId", "==", uData.coopId)), (snap) => {
             setStock(snap.docs.map(d => ({ id: d.id, ...d.data() } as StockTransaction)));
           });
           unsubs.push(unsubMagasin);
 
-          // F. Écoute des récoltes
           const unsubRecoltes = onSnapshot(query(collection(db, "recoltes"), where("coopId", "==", uData.coopId)), (snap) => {
             setHarvests(snap.docs.map(d => ({ id: d.id, ...d.data() } as Harvest)));
           });
@@ -295,12 +288,10 @@ const CoopDashboard: React.FC = () => {
 
     unsubs.push(unsubUser);
 
-    return () => {
-      unsubs.forEach(unsub => unsub()); // Nettoyage à la déconnexion
-    };
+    return () => { unsubs.forEach(unsub => unsub()); };
   }, [isLoggedIn]);
 
-  // 3. RÉCUPÉRATION DE LA MÉTÉO SÉPARÉE (Ne tourne que quand les coordonnées changent ou qu'internet revient)
+  // 3. RÉCUPÉRATION DE LA MÉTÉO SÉPARÉE
   useEffect(() => {
     const fetchWeather = async () => {
       if (coopProfile?.lat && coopProfile?.lng && !isOffline) {
@@ -358,19 +349,18 @@ const CoopDashboard: React.FC = () => {
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isOffline) return alert("La première connexion ou la création de compte nécessite internet.");
+    if (isOffline) return alert("La première connexion nécessite internet. Veuillez vous connecter au réseau.");
     
     try {
       if (authMode === 'register_admin') {
         const userCred = await createUserWithEmailAndPassword(auth, credentials.email, credentials.password);
         const newCoopId = "COOP-" + Math.random().toString(36).substr(2, 9).toUpperCase();
         
-        // SUPPRESSION DES FAUSSES DONNÉES : La coopérative démarre à zéro
         await setDoc(doc(db, "cooperatives", newCoopId), {
           nom: registerData.nomCoop || "Ma Coopérative",
           lat: registerData.lat,
           lng: registerData.lng,
-          cultures: [] // À paramétrer manuellement par l'admin
+          cultures: [] 
         });
         
         await setDoc(doc(db, "users", userCred.user.uid), { uid: userCred.user.uid, email: credentials.email, role: 'admin', coopId: newCoopId });
@@ -413,7 +403,7 @@ const CoopDashboard: React.FC = () => {
     }
   };
 
-  // ACTIONS (Ajout / Suppression) : Gérées nativement par Firebase hors-ligne
+  // ACTIONS (Ajout / Suppression)
   const addNewCrop = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!coopProfile || !appUser) return;
@@ -440,50 +430,9 @@ const CoopDashboard: React.FC = () => {
     if(window.confirm("Supprimer définitivement cet élément ?")) { 
       try { 
         await deleteDoc(doc(db, collectionName, id)); 
-        // Pas besoin de filtrer manuellement `setMembers` ou autre, onSnapshot s'en charge !
       } catch (err) { console.warn("Mise en attente de la suppression (Mode hors-ligne)."); } 
     } 
   };
-
-  const addMemberFromWizard = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!appUser?.coopId) return;
-    try {
-      const memberToSave = { ...newMember, coopId: appUser.coopId, statut: "Actif" };
-      const docRef = await addDoc(collection(db, "membres"), memberToSave);
-      setWizardStep(0); 
-      setActiveTab('members');
-      setReceiptMember({ id: docRef.id, ...memberToSave } as Member);
-    } catch (err) { alert("L'enregistrement a échoué."); }
-  };
-
-  const addOrder = async (e: React.FormEvent) => { 
-    e.preventDefault(); 
-    if(!appUser?.coopId) return; 
-    try { 
-      await addDoc(collection(db, "commandes"), { ...newOrder, coopId: appUser.coopId, statut: "En attente" }); 
-      setShowForm(false); setNewOrder({ produit: '', qte: '', date: '', cout: '' });
-    } catch (err) { console.error(err); } 
-  };
-
-  const addStockTransaction = async (e: React.FormEvent) => { 
-    e.preventDefault(); 
-    if(!appUser?.coopId) return; 
-    try { 
-      await addDoc(collection(db, "magasin"), { ...newStock, coopId: appUser.coopId}); 
-      setShowForm(false); setNewStock({ type: 'entree', produit: '', qte: '', date: '', cout: '', acteur: '' });
-    } catch (err) { console.error(err); } 
-  };
-
-  const addHarvestTransaction = async (e: React.FormEvent) => { 
-    e.preventDefault(); 
-    if(!appUser?.coopId) return; 
-    try { 
-      await addDoc(collection(db, "recoltes"), { ...newHarvest, coopId: appUser.coopId}); 
-      setShowForm(false); setNewHarvest({ type: 'recolte', culture: '', qte: 0, date: new Date().toISOString().split('T')[0], montant: 0, acteur: '' });
-    } catch (err) { console.error(err); } 
-  };
-
 
   useEffect(() => {
     if (wizardStep === 1) {
@@ -548,6 +497,22 @@ const CoopDashboard: React.FC = () => {
         alert("Erreur géométrique. Les lignes se croisent-elles ?"); 
     }
   };
+
+  const addMemberFromWizard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!appUser?.coopId) return;
+    try {
+      const memberToSave = { ...newMember, coopId: appUser.coopId, statut: "Actif" };
+      const docRef = await addDoc(collection(db, "membres"), memberToSave);
+      setWizardStep(0); 
+      setActiveTab('members');
+      setReceiptMember({ id: docRef.id, ...memberToSave } as Member);
+    } catch (err) { alert("L'enregistrement a échoué."); }
+  };
+
+  const addOrder = async (e: React.FormEvent) => { e.preventDefault(); if(!appUser?.coopId) return; try { await addDoc(collection(db, "commandes"), { ...newOrder, coopId: appUser.coopId, statut: "En attente" }); setShowForm(false); setNewOrder({ produit: '', qte: '', date: '', cout: '' }); } catch (err) { console.error(err); } };
+  const addStockTransaction = async (e: React.FormEvent) => { e.preventDefault(); if(!appUser?.coopId) return; try { await addDoc(collection(db, "magasin"), { ...newStock, coopId: appUser.coopId}); setShowForm(false); setNewStock({ type: 'entree', produit: '', qte: '', date: '', cout: '', acteur: '' }); } catch (err) { console.error(err); } };
+  const addHarvestTransaction = async (e: React.FormEvent) => { e.preventDefault(); if(!appUser?.coopId) return; try { await addDoc(collection(db, "recoltes"), { ...newHarvest, coopId: appUser.coopId}); setShowForm(false); setNewHarvest({ type: 'recolte', culture: '', qte: 0, date: new Date().toISOString().split('T')[0], montant: 0, acteur: '' }); } catch (err) { console.error(err); } };
 
   const exportToExcel = () => {
     let dataToExport;
