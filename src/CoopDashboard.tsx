@@ -236,6 +236,7 @@ const CoopDashboard: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
+  // CHARGEMENT DES DONNÉES ET DE LA MÉTÉO (CORRIGÉ ET ROBUSTE)
   useEffect(() => {
     if (isLoggedIn && appUser) {
       const fetchData = async () => {
@@ -245,40 +246,46 @@ const CoopDashboard: React.FC = () => {
             const currentProfile = { id: profileSnap.id, ...profileSnap.data() } as CoopProfile;
             setCoopProfile(currentProfile);
 
-            if (!isOffline) {
+            if (!isOffline && currentProfile.lat && currentProfile.lng) {
               try {
-                const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${currentProfile.lat}&longitude=${currentProfile.lng}&current_weather=true&daily=precipitation_probability,precipitation_sum&timezone=Africa%2FAbidjan&forecast_days=3`);
+                // Requête Météo avec timezone=auto pour plus de robustesse
+                const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${currentProfile.lat}&longitude=${currentProfile.lng}&current_weather=true&daily=precipitation_probability,precipitation_sum&timezone=auto&forecast_days=3`);
+                
+                if (!weatherRes.ok) throw new Error("Erreur serveur météo");
                 const wData = await weatherRes.json();
 
-                let locName = "Localité";
+                let locName = currentProfile.nom; // Fallback au nom de la coopérative
                 try {
-                  const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${currentProfile.lat}&lon=${currentProfile.lng}`);
+                  // Ajout de headers pour éviter le blocage par Nominatim
+                  const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${currentProfile.lat}&lon=${currentProfile.lng}&zoom=10`, {
+                    headers: { 'Accept-Language': 'fr' }
+                  });
                   const geoData = await geoRes.json();
                   if (geoData && geoData.address) {
-                    locName = geoData.address.city || geoData.address.town || geoData.address.village || geoData.address.county || geoData.address.state || "Côte d'Ivoire";
+                    locName = geoData.address.city || geoData.address.town || geoData.address.village || geoData.address.county || geoData.address.state || locName;
                   }
                 } catch(e) {
-                   console.warn("Erreur géocodage inversé.");
+                   console.warn("Géocodage inversé échoué, utilisation du nom par défaut.");
                 }
 
-                const alerts = wData.daily.time.map((t: string, i: number) => ({
+                const alerts = wData.daily?.time?.map((t: string, i: number) => ({
                   date: t,
                   prob: wData.daily.precipitation_probability[i] || 0,
                   sum: wData.daily.precipitation_sum[i] || 0
-                }));
+                })) || [];
 
                 setWeather({
-                  temp: wData.current_weather.temperature,
-                  isSunny: wData.current_weather.weathercode <= 3,
+                  temp: wData.current_weather?.temperature || 0,
+                  isSunny: wData.current_weather?.weathercode <= 3,
                   locationName: locName,
                   alerts
                 });
                 setWeatherError(false);
               } catch(e) {
-                 console.error("Erreur API Météo", e);
+                 console.error("Erreur complète API Météo", e);
                  setWeatherError(true);
               }
-            } else {
+            } else if (isOffline) {
               setWeatherError(true);
             }
           }
@@ -1191,7 +1198,10 @@ const CoopDashboard: React.FC = () => {
             )}
           </div>
 
+          {/* LA COLONNE DE DROITE (BARRE LATÉRALE) */}
           <div className="space-y-8 mt-4 lg:mt-0">
+            
+            {/* Widget Météo Complet avec Alertes 3 jours */}
             <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-8 rounded-[2.5rem] border border-blue-100 relative overflow-hidden shadow-sm">
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/40 rounded-full blur-2xl -translate-y-1/2 translate-x-1/4"></div>
               
