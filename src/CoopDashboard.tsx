@@ -102,6 +102,21 @@ interface Member {
   cout: string; 
   gps?: Point; 
   parcelle?: Point[];
+  // Champs PURGA
+  region?: string;
+  departement?: string;
+  sousPrefecture?: string;
+  localite?: string;
+  siteProduction?: string;
+  sexe?: '1' | '2';
+  age?: string;
+  numeroCNI?: string;
+  telephone?: string;
+  speculation?: '1' | '2' | '3';
+  dejaB_PURGA?: '1' | '0';
+  nomCooperative?: string;
+  nomSecretaire?: string;
+  contactSecretaire?: string;
 }
 
 interface Order { id: string; coopId: string; produit: string; qte: string; date: string; cout: string; statut: string; }
@@ -213,7 +228,7 @@ const CoopDashboard: React.FC = () => {
   const [showScanner, setShowScanner] = useState(false);
   const [scanData, setScanData] = useState('');
 
-  const [newMember, setNewMember] = useState<Partial<Member>>({ nom: '', village: '', culture: '', surface: '', date: '', cout: '' });
+  const [newMember, setNewMember] = useState<Partial<Member>>({ nom: '', village: '', culture: '', surface: '', date: '', cout: '', region: '', departement: '', sousPrefecture: '', localite: '', siteProduction: '', sexe: '1', age: '', numeroCNI: '', telephone: '', speculation: '1', dejaB_PURGA: '0', nomCooperative: '', nomSecretaire: '', contactSecretaire: '' });
   const [isCustomCulture, setIsCustomCulture] = useState(false);
 
   const [newOrder, setNewOrder] = useState<Partial<Order>>({ produit: '', qte: '', date: '', cout: '' });
@@ -475,7 +490,10 @@ const CoopDashboard: React.FC = () => {
     setNewMember({ 
       nom: '', village: '', 
       culture: defaultCulture, 
-      surface: '', date: new Date().toISOString().split('T')[0], cout: '5000' 
+      surface: '', date: new Date().toISOString().split('T')[0], cout: '5000',
+      region: '', departement: '', sousPrefecture: '', localite: '', siteProduction: '',
+      sexe: '1', age: '', numeroCNI: '', telephone: '', speculation: '1',
+      dejaB_PURGA: '0', nomCooperative: coopProfile?.nom || '', nomSecretaire: '', contactSecretaire: ''
     });
     initialCenterDone.current = false;
     setWizardStep(1);
@@ -710,51 +728,183 @@ const CoopDashboard: React.FC = () => {
     return ( 
       <div className="fixed inset-0 bg-[#EAE6DF] z-[200] overflow-y-auto">
         <div className="bg-[#1b4332] text-white p-5 shadow-md flex justify-between items-center sticky top-0 z-10 rounded-b-3xl">
-          <h2 className="font-bold text-lg">Profil du producteur</h2>
+          <div>
+            <h2 className="font-bold text-lg">Profil du producteur</h2>
+            <p className="text-emerald-200 text-sm">Remplissez toutes les informations PURGA</p>
+          </div>
           <button aria-label="Fermer" onClick={() => setWizardStep(0)} className="bg-white/10 p-2 rounded-full"><X size={24}/></button>
         </div>
-        <div className="p-4 max-w-md mx-auto mt-6">
-          <form onSubmit={addMemberFromWizard} className="space-y-5 bg-white p-8 rounded-[2.5rem] shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] border border-stone-100">
-            <div className="bg-stone-50 p-5 rounded-2xl border border-stone-100 flex justify-between items-center mb-4">
-              <span className="font-bold text-stone-600">Surface retenue :</span>
+        <div className="p-4 max-w-md mx-auto mt-4 pb-10">
+          <form onSubmit={addMemberFromWizard} className="space-y-6">
+
+            {/* Surface calculée */}
+            <div className="bg-white p-5 rounded-[2rem] shadow-sm border border-stone-100 flex justify-between items-center">
+              <span className="font-bold text-stone-600">📐 Surface retenue :</span>
               <span className="text-2xl font-black text-emerald-600">{newMember.surface} ha</span>
             </div>
-            <div className="space-y-2">
-              <label htmlFor="nomComplet" className="text-sm font-bold text-stone-500 px-2">Comment s'appelle ce paysan ?</label>
-              <input id="nomComplet" required placeholder="Nom complet..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-lg text-stone-800" value={newMember.nom} onChange={e => setNewMember({...newMember, nom: e.target.value})} />
-            </div>
-            <div className="space-y-2">
-              <label htmlFor="village" className="text-sm font-bold text-stone-500 px-2">Dans quel campement/village ?</label>
-              <input id="village" required placeholder="Son village..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-lg text-stone-800" value={newMember.village} onChange={e => setNewMember({...newMember, village: e.target.value})} />
-            </div>
-            
-            <div className="space-y-2">
-              <label aria-label="Sélection culture" className="text-sm font-bold text-stone-500 px-2">Quelle culture principale ?</label>
-              <select required className="w-full p-4 bg-white shadow-sm rounded-xl border-none focus:ring-2 focus:ring-emerald-500 transition-all font-bold text-lg text-stone-800" 
-                value={isCustomCulture ? 'autre' : newMember.culture} 
-                onChange={e => {
-                  if (e.target.value === 'autre') {
-                    setIsCustomCulture(true);
-                    setNewMember({...newMember, culture: ''});
-                  } else {
-                    setIsCustomCulture(false);
-                    setNewMember({...newMember, culture: e.target.value});
-                  }
-                }}>
-                <option value="" disabled>Choisir dans la liste...</option>
-                {coopProfile?.cultures?.map((c, idx) => (<option key={idx} value={c.nom}>{c.nom}</option>))}
-                <option value="autre" className="font-bold text-emerald-700">➕ Autre (Préciser...)</option>
-              </select>
-            </div>
 
-            {isCustomCulture && (
-              <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
-                <label className="text-sm font-bold text-emerald-600 px-2">Précisez la culture</label>
-                <input required placeholder="Ex: Tomate, etc." className="w-full p-4 bg-emerald-50/50 rounded-2xl border border-emerald-200 focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-bold text-lg text-emerald-900" value={newMember.culture} onChange={e => setNewMember({...newMember, culture: e.target.value})} />
+            {/* SECTION 1 : Localisation */}
+            <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-stone-100 space-y-4">
+              <h3 className="font-black text-stone-700 text-sm uppercase tracking-widest flex items-center gap-2 pb-2 border-b border-stone-100">
+                📍 Localisation
+              </h3>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-stone-500 px-1">Région</label>
+                <input required placeholder="Ex: Vallée du Bandama" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-stone-800" value={newMember.region || ''} onChange={e => setNewMember({...newMember, region: e.target.value})} />
               </div>
-            )}
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-stone-500 px-1">Département</label>
+                <input required placeholder="Ex: Bouaké" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-stone-800" value={newMember.departement || ''} onChange={e => setNewMember({...newMember, departement: e.target.value})} />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-stone-500 px-1">Sous-Préfecture</label>
+                <input required placeholder="Ex: Brobo" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-stone-800" value={newMember.sousPrefecture || ''} onChange={e => setNewMember({...newMember, sousPrefecture: e.target.value})} />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-stone-500 px-1">Localité / Campement</label>
+                <input required placeholder="Ex: Kouamékro" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-stone-800" value={newMember.localite || ''} onChange={e => setNewMember({...newMember, localite: e.target.value, village: e.target.value})} />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-stone-500 px-1">Site de Production</label>
+                <input placeholder="Nom du site (si différent de la localité)" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-stone-800" value={newMember.siteProduction || ''} onChange={e => setNewMember({...newMember, siteProduction: e.target.value})} />
+              </div>
+            </div>
 
-            <button type="submit" className="w-full h-16 bg-[#1b4332] text-white rounded-2xl font-black text-lg shadow-lg mt-8 hover:shadow-xl hover:-translate-y-0.5 transition-all">Enregistrer ce profil</button>
+            {/* SECTION 2 : Identité du paysan */}
+            <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-stone-100 space-y-4">
+              <h3 className="font-black text-stone-700 text-sm uppercase tracking-widest flex items-center gap-2 pb-2 border-b border-stone-100">
+                👤 Identité du Producteur
+              </h3>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-stone-500 px-1">Nom et Prénoms</label>
+                <input required placeholder="Nom complet..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-lg text-stone-800" value={newMember.nom || ''} onChange={e => setNewMember({...newMember, nom: e.target.value})} />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-stone-500 px-1">Sexe</label>
+                <div className="flex gap-3">
+                  <button type="button" onClick={() => setNewMember({...newMember, sexe: '1'})} className={`flex-1 py-4 rounded-2xl font-bold text-sm transition-all ${newMember.sexe === '1' ? 'bg-blue-600 text-white shadow-md' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}>
+                    👨 Masculin (1)
+                  </button>
+                  <button type="button" onClick={() => setNewMember({...newMember, sexe: '2'})} className={`flex-1 py-4 rounded-2xl font-bold text-sm transition-all ${newMember.sexe === '2' ? 'bg-pink-500 text-white shadow-md' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}>
+                    👩 Féminin (2)
+                  </button>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-stone-500 px-1">Âge</label>
+                <input required type="number" min="18" max="100" placeholder="Ex: 42" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-stone-800" value={newMember.age || ''} onChange={e => setNewMember({...newMember, age: e.target.value})} />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-stone-500 px-1">Numéro CNI</label>
+                <input placeholder="Numéro de la Carte Nationale d'Identité" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-stone-800" value={newMember.numeroCNI || ''} onChange={e => setNewMember({...newMember, numeroCNI: e.target.value})} />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-stone-500 px-1">Téléphone</label>
+                <input type="tel" placeholder="Ex: 07 XX XX XX XX" className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-stone-800" value={newMember.telephone || ''} onChange={e => setNewMember({...newMember, telephone: e.target.value})} />
+              </div>
+            </div>
+
+            {/* SECTION 3 : Activité agricole */}
+            <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-stone-100 space-y-4">
+              <h3 className="font-black text-stone-700 text-sm uppercase tracking-widest flex items-center gap-2 pb-2 border-b border-stone-100">
+                🌾 Activité Agricole
+              </h3>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-stone-500 px-1">Spéculation Choisie</label>
+                <div className="space-y-2">
+                  {[
+                    { val: '1', label: '🌽 1 - Maïs' },
+                    { val: '2', label: '🍠 2 - Manioc' },
+                    { val: '3', label: '🌾 3 - Riz' },
+                  ].map(opt => (
+                    <button key={opt.val} type="button" onClick={() => setNewMember({...newMember, speculation: opt.val as '1'|'2'|'3'})} className={`w-full py-4 px-5 rounded-2xl font-bold text-sm text-left transition-all ${newMember.speculation === opt.val ? 'bg-emerald-600 text-white shadow-md' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-stone-500 px-1">Culture principale (détail)</label>
+                <select required className="w-full p-4 bg-white shadow-sm rounded-xl border border-stone-200 focus:ring-2 focus:ring-emerald-500 transition-all font-bold text-lg text-stone-800" 
+                  value={isCustomCulture ? 'autre' : newMember.culture} 
+                  onChange={e => {
+                    if (e.target.value === 'autre') {
+                      setIsCustomCulture(true);
+                      setNewMember({...newMember, culture: ''});
+                    } else {
+                      setIsCustomCulture(false);
+                      setNewMember({...newMember, culture: e.target.value});
+                    }
+                  }}>
+                  <option value="" disabled>Choisir dans la liste...</option>
+                  {coopProfile?.cultures?.map((c, idx) => (<option key={idx} value={c.nom}>{c.nom}</option>))}
+                  <option value="autre" className="font-bold text-emerald-700">➕ Autre (Préciser...)</option>
+                </select>
+              </div>
+              {isCustomCulture && (
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-emerald-600 px-1">Précisez la culture</label>
+                  <input required placeholder="Ex: Tomate, Igname..." className="w-full p-4 bg-emerald-50/50 rounded-2xl border border-emerald-200 focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-bold text-lg text-emerald-900" value={newMember.culture || ''} onChange={e => setNewMember({...newMember, culture: e.target.value})} />
+                </div>
+              )}
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-stone-500 px-1">Superficie à Emblaver (en ha)</label>
+                <div className="w-full p-4 bg-emerald-50 rounded-2xl border border-emerald-200 font-black text-emerald-700 text-lg">
+                  {newMember.surface} ha <span className="text-sm text-stone-400 font-normal">(calculée par GPS)</span>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-stone-500 px-1">Coordonnées GPS de la Parcelle</label>
+                <div className="w-full p-4 bg-stone-50 rounded-2xl border border-stone-200 font-mono text-xs text-stone-600 leading-relaxed">
+                  {newMember.gps ? (
+                    <span>Long: <strong>{newMember.gps.lng.toFixed(6)}</strong> | Lat: <strong>{newMember.gps.lat.toFixed(6)}</strong></span>
+                  ) : (
+                    <span className="text-stone-400">Non définie (tracez d'abord la parcelle)</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* SECTION 4 : Historique PURGA */}
+            <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-stone-100 space-y-4">
+              <h3 className="font-black text-stone-700 text-sm uppercase tracking-widest flex items-center gap-2 pb-2 border-b border-stone-100">
+                📋 Historique PURGA
+              </h3>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-stone-500 px-1">Déjà bénéficiaire de PURGA 1 ou PURGA 2 ?</label>
+                <div className="flex gap-3">
+                  <button type="button" onClick={() => setNewMember({...newMember, dejaB_PURGA: '1'})} className={`flex-1 py-4 rounded-2xl font-bold text-sm transition-all ${newMember.dejaB_PURGA === '1' ? 'bg-amber-500 text-white shadow-md' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}>
+                    ✅ Oui (1)
+                  </button>
+                  <button type="button" onClick={() => setNewMember({...newMember, dejaB_PURGA: '0'})} className={`flex-1 py-4 rounded-2xl font-bold text-sm transition-all ${newMember.dejaB_PURGA === '0' ? 'bg-stone-700 text-white shadow-md' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}>
+                    ❌ Non (0)
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* SECTION 5 : Informations Coopérative */}
+            <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-stone-100 space-y-4">
+              <h3 className="font-black text-stone-700 text-sm uppercase tracking-widest flex items-center gap-2 pb-2 border-b border-stone-100">
+                🤝 Coopérative
+              </h3>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-stone-500 px-1">Nom de la Coopérative du Bénéficiaire</label>
+                <input required placeholder="Nom officiel de la coopérative..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-stone-800" value={newMember.nomCooperative || ''} onChange={e => setNewMember({...newMember, nomCooperative: e.target.value})} />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-stone-500 px-1">Nom / Prénoms du Secrétaire</label>
+                <input required placeholder="Secrétaire de la coopérative..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-stone-800" value={newMember.nomSecretaire || ''} onChange={e => setNewMember({...newMember, nomSecretaire: e.target.value})} />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-stone-500 px-1">Contact du Secrétaire</label>
+                <input type="tel" placeholder="Téléphone du secrétaire..." className="w-full p-4 bg-stone-50 rounded-2xl border-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-stone-800" value={newMember.contactSecretaire || ''} onChange={e => setNewMember({...newMember, contactSecretaire: e.target.value})} />
+              </div>
+            </div>
+
+            <button type="submit" className="w-full h-16 bg-[#1b4332] text-white rounded-2xl font-black text-lg shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all">
+              ✅ Enregistrer ce producteur
+            </button>
           </form>
         </div>
       </div> 
