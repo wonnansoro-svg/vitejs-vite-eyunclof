@@ -6,7 +6,8 @@ import {
   Package, ArrowDownToLine, ArrowUpFromLine, Check, 
   Play, Square, Undo, Navigation, MapPin, 
   Settings, Target, MapPin as MapPinDrop,
-  Wheat, Coins, Leaf, QrCode, Scan, Printer, KeyRound, AlertTriangle, Copy, WifiOff
+  Wheat, Coins, Leaf, QrCode, Scan, Printer, KeyRound, AlertTriangle, Copy, WifiOff,
+  BookOpen, ChevronDown, ChevronRight, HelpCircle
 } from 'lucide-react';
 
 import * as XLSX from 'xlsx';
@@ -164,17 +165,395 @@ const MapInvalidator = () => {
   return null;
 };
 
-// --- MOTEUR DE PRESCRIPTION AGRONOMIQUE (PHASE PILOTE) ---
+// --- COMPOSANT GUIDE UTILISATEUR INTÉGRÉ ---
+const GUIDE_SECTIONS = [
+  {
+    id: 'presentation',
+    icon: '🌾',
+    title: 'Présentation',
+    color: 'emerald',
+    content: [
+      {
+        type: 'intro',
+        text: "GEScoop est la plateforme officielle de gestion des coopératives agricoles du programme PURGA. Elle permet aux agents d'enregistrer les producteurs, tracer les parcelles GPS et suivre toutes les activités.",
+      },
+      {
+        type: 'cards',
+        items: [
+          { icon: '👥', title: 'Gestion des membres', desc: 'Enregistrez les producteurs avec toutes les informations PURGA requises.' },
+          { icon: '🗺️', title: 'Cartographie GPS', desc: 'Tracez les parcelles en marchant le long des limites ou en plaçant des points manuels.' },
+          { icon: '🌾', title: 'Récoltes & Ventes', desc: 'Suivez les volumes récoltés et les revenus générés.' },
+          { icon: '📦', title: 'Magasin', desc: 'Gérez les entrées et sorties de stocks d\'intrants agricoles.' },
+        ]
+      }
+    ]
+  },
+  {
+    id: 'connexion',
+    icon: '🔐',
+    title: 'Connexion & Inscription',
+    color: 'blue',
+    content: [
+      {
+        type: 'alert',
+        variant: 'info',
+        title: 'Connexion internet requise',
+        text: 'La première connexion ou inscription nécessite un accès internet. Ensuite, l\'application fonctionne hors-ligne.'
+      },
+      {
+        type: 'steps',
+        title: '🏢 Créer une coopérative (Admin)',
+        items: [
+          { title: 'Appuyez sur "Je n\'ai pas de compte"', desc: 'Puis choisissez l\'onglet "Créer Coop".' },
+          { title: 'Saisissez le nom officiel de votre coopérative', desc: 'Nom tel qu\'enregistré officiellement.' },
+          { title: 'Captez le siège par GPS', desc: 'Appuyez sur le bouton vert. Soyez à l\'extérieur pour un meilleur signal.' },
+          { title: 'Créez vos identifiants', desc: 'Email + mot de passe (min. 6 caractères). Notez votre Code Coopérative pour inviter vos agents.' },
+        ]
+      },
+      {
+        type: 'steps',
+        title: '👷 Rejoindre une équipe (Agent)',
+        items: [
+          { title: 'Appuyez sur "Je n\'ai pas de compte"', desc: 'Puis choisissez "Rejoindre Équipe".' },
+          { title: 'Entrez le Code Coopérative', desc: 'Fourni par votre administrateur. Format : COOP-XXXXXXXXX.' },
+          { title: 'Créez vos identifiants personnels', desc: 'Chaque agent dispose de ses propres accès.' },
+        ]
+      }
+    ]
+  },
+  {
+    id: 'enregistrement',
+    icon: '📝',
+    title: 'Enregistrer un producteur',
+    color: 'emerald',
+    content: [
+      {
+        type: 'alert',
+        variant: 'warn',
+        title: 'Formulaire officiel PURGA',
+        text: 'Ce formulaire collecte les données requises par le programme PURGA. Remplissez soigneusement tous les champs obligatoires.'
+      },
+      {
+        type: 'text',
+        text: 'Appuyez sur le bouton vert 📍 (coin inférieur droit) pour lancer l\'assistant d\'enregistrement en 3 étapes.'
+      },
+      {
+        type: 'fields',
+        title: '📍 Localisation',
+        fields: [
+          { name: 'Région', desc: 'Région administrative (ex: Vallée du Bandama)', required: true },
+          { name: 'Département', desc: 'Département de la parcelle', required: true },
+          { name: 'Sous-Préfecture', desc: 'Sous-préfecture de rattachement', required: true },
+          { name: 'Localité', desc: 'Village ou campement de résidence', required: true },
+          { name: 'Site de Production', desc: 'Nom du site si différent de la localité', required: false },
+        ]
+      },
+      {
+        type: 'fields',
+        title: '👤 Identité du Producteur',
+        fields: [
+          { name: 'Nom et Prénoms', desc: 'Nom complet tel qu\'inscrit sur la CNI', required: true },
+          { name: 'Sexe', desc: '1 = Masculin | 2 = Féminin', required: true },
+          { name: 'Âge', desc: 'Âge en années révolues', required: true },
+          { name: 'Numéro CNI', desc: 'Carte Nationale d\'Identité', required: false },
+          { name: 'Téléphone', desc: 'Numéro mobile du producteur', required: false },
+        ]
+      },
+      {
+        type: 'fields',
+        title: '🌾 Activité Agricole',
+        fields: [
+          { name: 'Spéculation', desc: '1 = Maïs | 2 = Manioc | 3 = Riz', required: true },
+          { name: 'Culture principale', desc: 'Variété exacte (ex: Riz Pluvial, Riz Irrigué…)', required: true },
+          { name: 'Superficie (ha)', desc: 'Calculée automatiquement après le tracé GPS', required: true },
+          { name: 'Coordonnées GPS', desc: 'Longitude et latitude — remplies automatiquement', required: true },
+        ]
+      },
+      {
+        type: 'fields',
+        title: '📋 Historique PURGA',
+        fields: [
+          { name: 'Déjà bénéficiaire PURGA 1 ou 2', desc: '1 = Oui | 0 = Non (nouveau bénéficiaire)', required: true },
+        ]
+      },
+      {
+        type: 'fields',
+        title: '🤝 Coopérative',
+        fields: [
+          { name: 'Nom de la Coopérative', desc: 'Nom officiel de la coopérative du producteur', required: true },
+          { name: 'Nom/Prénoms du Secrétaire', desc: 'Nom complet du secrétaire', required: true },
+          { name: 'Contact du Secrétaire', desc: 'Téléphone du secrétaire', required: false },
+        ]
+      },
+    ]
+  },
+  {
+    id: 'gps',
+    icon: '🗺️',
+    title: 'Tracer une parcelle GPS',
+    color: 'teal',
+    content: [
+      {
+        type: 'text',
+        text: "L'outil GPS permet de délimiter précisément la parcelle. Il fonctionne même hors-ligne (le GPS ne nécessite pas internet)."
+      },
+      {
+        type: 'steps',
+        title: '🚶 Méthode 1 — Arpenter à pied (recommandée)',
+        items: [
+          { title: 'Positionnez-vous à un coin de la parcelle', desc: 'Attendez que le point bleu apparaisse sur la carte.' },
+          { title: 'Appuyez sur "Arpenter à pied" ▶️', desc: 'L\'app enregistre votre position en marchant le long des bords.' },
+          { title: 'Marchez le long du périmètre complet', desc: 'Suivez tous les bords en vous arrêtant aux angles.' },
+          { title: 'Appuyez sur "Arrêter la marche" ⏹️', desc: 'Quand vous avez fait le tour complet de la parcelle.' },
+          { title: 'Appuyez sur "Calculer la surface" ✅', desc: 'La superficie est calculée automatiquement en hectares.' },
+        ]
+      },
+      {
+        type: 'steps',
+        title: '📌 Méthode 2 — Points manuels',
+        items: [
+          { title: 'Ne démarrez PAS l\'arpentage', desc: 'Restez en mode manuel (bouton "Arpenter" inactif).' },
+          { title: 'Allez à chaque angle de la parcelle', desc: 'Appuyez sur "Placer un point" à chaque coin.' },
+          { title: 'Minimum 3 points requis', desc: 'Pour former un polygone valide.' },
+        ]
+      },
+      {
+        type: 'alert',
+        variant: 'success',
+        title: 'Astuce GPS',
+        text: 'Utilisez 🧭 pour recentrer la carte sur votre position. Le bouton "Effacer" annule le dernier point enregistré en cas d\'erreur.'
+      }
+    ]
+  },
+  {
+    id: 'recoltes',
+    icon: '🌾',
+    title: 'Récoltes & Ventes',
+    color: 'amber',
+    content: [
+      {
+        type: 'text',
+        text: 'Depuis l\'onglet Récoltes & Ventes, appuyez sur le bouton + pour enregistrer une opération.'
+      },
+      {
+        type: 'cards',
+        items: [
+          { icon: '🌾', title: 'Récolte', desc: 'Indiquez la date, la culture et le volume en tonnes. Les projections se mettent à jour automatiquement.' },
+          { icon: '💰', title: 'Vente', desc: 'Date, culture, volume vendu et montant en FCFA. Le nom de l\'acheteur est optionnel.' },
+        ]
+      }
+    ]
+  },
+  {
+    id: 'stock',
+    icon: '📦',
+    title: 'Gestion du Magasin',
+    color: 'purple',
+    content: [
+      {
+        type: 'text',
+        text: 'L\'onglet Magasin permet de suivre les mouvements des intrants (engrais, semences, pesticides…).'
+      },
+      {
+        type: 'cards',
+        items: [
+          { icon: '📥', title: 'Entrée de stock', desc: '"Ça rentre dans le magasin" — réception d\'intrants. Précisez le fournisseur.' },
+          { icon: '📤', title: 'Sortie de stock', desc: '"Ça sort du magasin" — distribution aux producteurs. Précisez le bénéficiaire.' },
+        ]
+      }
+    ]
+  },
+  {
+    id: 'horsligne',
+    icon: '📵',
+    title: 'Mode Hors-ligne',
+    color: 'slate',
+    content: [
+      {
+        type: 'alert',
+        variant: 'success',
+        title: 'L\'application fonctionne sans internet !',
+        text: 'Toutes les données saisies sont sauvegardées localement et synchronisées automatiquement dès que vous retrouvez du réseau.'
+      },
+      {
+        type: 'tags',
+        title: '✅ Fonctionne hors-ligne',
+        variant: 'green',
+        items: ['Enregistrement GPS', 'Tracé de parcelle', 'Ajout de membres', 'Récoltes & Ventes', 'Stocks']
+      },
+      {
+        type: 'tags',
+        title: '❌ Nécessite internet',
+        variant: 'gray',
+        items: ['Première inscription', 'Fond de carte satellite', 'Météo en temps réel', 'Synchronisation']
+      },
+      {
+        type: 'alert',
+        variant: 'info',
+        title: 'Conseil terrain',
+        text: 'Connectez-vous au moins une fois par jour en zone couverte pour synchroniser vos saisies du jour.'
+      }
+    ]
+  },
+  {
+    id: 'export',
+    icon: '📤',
+    title: 'Exporter les données',
+    color: 'indigo',
+    content: [
+      {
+        type: 'text',
+        text: 'Depuis l\'onglet Producteurs, deux boutons d\'export sont disponibles en haut de la liste.'
+      },
+      {
+        type: 'cards',
+        items: [
+          { icon: '📊', title: 'Export Excel (.xlsx)', desc: 'Tableau complet avec tous les champs PURGA pour tous les producteurs. Idéal pour les rapports officiels.' },
+          { icon: '📄', title: 'Export PDF', desc: 'Document formaté avec la liste des producteurs, surfaces et cultures.' },
+        ]
+      },
+      {
+        type: 'alert',
+        variant: 'success',
+        title: 'Reçu individuel avec QR code',
+        text: 'Après chaque enregistrement, un reçu avec QR code est généré automatiquement. Il peut être imprimé ou scanné pour retrouver rapidement un producteur.'
+      }
+    ]
+  },
+];
+
+const colorMap: Record<string, { bg: string; text: string; border: string; badge: string }> = {
+  emerald: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', badge: 'bg-emerald-600' },
+  blue:    { bg: 'bg-blue-50',    text: 'text-blue-700',    border: 'border-blue-200',    badge: 'bg-blue-600' },
+  teal:    { bg: 'bg-teal-50',    text: 'text-teal-700',    border: 'border-teal-200',    badge: 'bg-teal-600' },
+  amber:   { bg: 'bg-amber-50',   text: 'text-amber-700',   border: 'border-amber-200',   badge: 'bg-amber-500' },
+  purple:  { bg: 'bg-purple-50',  text: 'text-purple-700',  border: 'border-purple-200',  badge: 'bg-purple-600' },
+  slate:   { bg: 'bg-slate-50',   text: 'text-slate-700',   border: 'border-slate-200',   badge: 'bg-slate-600' },
+  indigo:  { bg: 'bg-indigo-50',  text: 'text-indigo-700',  border: 'border-indigo-200',  badge: 'bg-indigo-600' },
+};
+
+const GuideSection: React.FC<{ section: typeof GUIDE_SECTIONS[0]; defaultOpen?: boolean }> = ({ section, defaultOpen = false }) => {
+  const [open, setOpen] = useState(defaultOpen);
+  const c = colorMap[section.color] || colorMap.emerald;
+
+  return (
+    <div className={`rounded-3xl border ${c.border} overflow-hidden transition-all`}>
+      <button
+        onClick={() => setOpen(!open)}
+        className={`w-full flex items-center justify-between p-5 ${c.bg} transition-colors`}
+      >
+        <div className="flex items-center gap-3">
+          <span className="text-2xl">{section.icon}</span>
+          <span className={`font-black text-base ${c.text}`}>{section.title}</span>
+        </div>
+        {open ? <ChevronDown size={20} className={c.text} /> : <ChevronRight size={20} className={c.text} />}
+      </button>
+
+      {open && (
+        <div className="p-5 bg-white space-y-5 border-t border-stone-100">
+          {section.content.map((block, bi) => {
+            if (block.type === 'intro' || block.type === 'text') {
+              return <p key={bi} className="text-sm text-stone-600 leading-relaxed">{(block as { text: string }).text}</p>;
+            }
+            if (block.type === 'alert') {
+              const b = block as { variant: string; title: string; text: string };
+              const styles = {
+                info:    'bg-blue-50 border-blue-200 text-blue-800',
+                warn:    'bg-amber-50 border-amber-200 text-amber-800',
+                success: 'bg-emerald-50 border-emerald-200 text-emerald-800',
+              }[b.variant] || 'bg-stone-50 border-stone-200 text-stone-800';
+              return (
+                <div key={bi} className={`p-4 rounded-2xl border text-sm ${styles}`}>
+                  <p className="font-bold mb-1">{b.title}</p>
+                  <p className="font-medium opacity-80">{b.text}</p>
+                </div>
+              );
+            }
+            if (block.type === 'cards') {
+              const b = block as { items: { icon: string; title: string; desc: string }[] };
+              return (
+                <div key={bi} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {b.items.map((item, ii) => (
+                    <div key={ii} className="bg-stone-50 rounded-2xl p-4 border border-stone-100">
+                      <p className="font-bold text-stone-800 mb-1 flex items-center gap-2"><span>{item.icon}</span>{item.title}</p>
+                      <p className="text-xs text-stone-500 leading-relaxed">{item.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              );
+            }
+            if (block.type === 'steps') {
+              const b = block as { title: string; items: { title: string; desc: string }[] };
+              return (
+                <div key={bi}>
+                  <p className="font-bold text-stone-700 text-sm mb-3">{b.title}</p>
+                  <div className="space-y-3">
+                    {b.items.map((step, si) => (
+                      <div key={si} className="flex gap-3 items-start">
+                        <span className={`flex-shrink-0 w-7 h-7 ${c.badge} text-white rounded-xl flex items-center justify-center font-black text-xs`}>{si + 1}</span>
+                        <div>
+                          <p className="font-bold text-stone-700 text-sm">{step.title}</p>
+                          <p className="text-xs text-stone-500 mt-0.5">{step.desc}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            }
+            if (block.type === 'fields') {
+              const b = block as { title: string; fields: { name: string; desc: string; required: boolean }[] };
+              return (
+                <div key={bi} className={`rounded-2xl border ${c.border} overflow-hidden`}>
+                  <div className={`${c.bg} px-4 py-3`}>
+                    <p className={`font-black text-sm ${c.text}`}>{b.title}</p>
+                  </div>
+                  <div className="divide-y divide-stone-100">
+                    {b.fields.map((field, fi) => (
+                      <div key={fi} className="flex items-start justify-between px-4 py-3 gap-3">
+                        <div>
+                          <p className="font-bold text-stone-700 text-sm">{field.name}</p>
+                          <p className="text-xs text-stone-400 mt-0.5">{field.desc}</p>
+                        </div>
+                        <span className={`flex-shrink-0 text-[10px] font-bold px-2 py-1 rounded-full ${field.required ? 'bg-amber-100 text-amber-700' : 'bg-stone-100 text-stone-500'}`}>
+                          {field.required ? '⭐ Requis' : 'Optionnel'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            }
+            if (block.type === 'tags') {
+              const b = block as { title: string; variant: string; items: string[] };
+              return (
+                <div key={bi}>
+                  <p className="font-bold text-stone-700 text-sm mb-2">{b.title}</p>
+                  <div className="flex flex-wrap gap-2">
+                    {b.items.map((tag, ti) => (
+                      <span key={ti} className={`text-xs font-bold px-3 py-1.5 rounded-full ${b.variant === 'green' ? 'bg-emerald-100 text-emerald-700' : 'bg-stone-100 text-stone-500'}`}>{tag}</span>
+                    ))}
+                  </div>
+                </div>
+              );
+            }
+            return null;
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// --- MOTEUR DE PRESCRIPTION AGRONOMIQUE ---
 const getAgronomicAdvice = (culture: string | undefined, surfaceHa: number) => {
   const s = surfaceHa || 0;
   const cult = (culture || '').toLowerCase();
-  
   if (cult.includes('irrigué')) return { semence: s*60, npk: s*250, uree: s*150 };
   if (cult.includes('bas-fond')) return { semence: s*50, npk: s*200, uree: s*100 };
-  if (cult.includes('pluvial') || cult.includes('riz')) return { semence: s*40, npk: s*150, uree: s*50 }; 
+  if (cult.includes('pluvial') || cult.includes('riz')) return { semence: s*40, npk: s*150, uree: s*50 };
   if (cult.includes('maïs') || cult.includes('mais')) return { semence: s*20, npk: s*150, uree: s*100 };
   if (cult.includes('coton')) return { semence: s*15, npk: s*200, uree: s*50 };
-  
   return null;
 };
 
@@ -204,7 +583,7 @@ const CoopDashboard: React.FC = () => {
   const [appUser, setAppUser] = useState<AppUser | null>(null);
   const [coopProfile, setCoopProfile] = useState<CoopProfile | null>(null);
   
-  const [activeTab, setActiveTab] = useState<'overview' | 'members' | 'orders' | 'stock' | 'harvests' | 'map' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'members' | 'orders' | 'stock' | 'harvests' | 'map' | 'settings' | 'guide'>('overview');
   const [showForm, setShowForm] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [weather, setWeather] = useState<WeatherData | null>(null);
@@ -363,10 +742,11 @@ const CoopDashboard: React.FC = () => {
     
     try {
       if (authMode === 'register_admin') {
+        // 1. Créer le compte Firebase Auth d'abord
         const userCred = await createUserWithEmailAndPassword(auth, credentials.email, credentials.password);
         const newCoopId = "COOP-" + Math.random().toString(36).substr(2, 9).toUpperCase();
         
-        // CONFIGURATION PHASE PILOTE : Les 5 cultures par défaut
+        // 2. Maintenant authentifié → Firestore accepte les écritures
         await setDoc(doc(db, "cooperatives", newCoopId), {
           nom: registerData.nomCoop || "Ma Coopérative",
           lat: registerData.lat,
@@ -380,20 +760,50 @@ const CoopDashboard: React.FC = () => {
           ] 
         });
         
-        await setDoc(doc(db, "users", userCred.user.uid), { uid: userCred.user.uid, email: credentials.email, role: 'admin', coopId: newCoopId });
+        await setDoc(doc(db, "users", userCred.user.uid), {
+          uid: userCred.user.uid,
+          email: credentials.email,
+          role: 'admin',
+          coopId: newCoopId
+        });
+
       } else if (authMode === 'register_agent') {
         if (!registerData.coopIdToJoin) return alert("Veuillez entrer le Code de la coopérative.");
-        const coopDoc = await getDoc(doc(db, "cooperatives", registerData.coopIdToJoin));
-        if (!coopDoc.exists()) return alert("Code coopérative introuvable !");
 
+        // 1. Créer le compte Firebase Auth EN PREMIER
+        //    (sans ça, Firestore bloque toute lecture avec "Missing or insufficient permissions")
         const userCred = await createUserWithEmailAndPassword(auth, credentials.email, credentials.password);
-        await setDoc(doc(db, "users", userCred.user.uid), { uid: userCred.user.uid, email: credentials.email, role: 'agent', coopId: registerData.coopIdToJoin });
+
+        // 2. Maintenant authentifié → on peut lire cooperatives
+        const coopDoc = await getDoc(doc(db, "cooperatives", registerData.coopIdToJoin));
+
+        if (!coopDoc.exists()) {
+          // Code invalide : supprimer le compte créé pour ne pas laisser un utilisateur orphelin
+          await userCred.user.delete();
+          return alert("❌ Code coopérative introuvable. Vérifiez le code fourni par votre administrateur.");
+        }
+
+        // 3. Enregistrer le profil agent
+        await setDoc(doc(db, "users", userCred.user.uid), {
+          uid: userCred.user.uid,
+          email: credentials.email,
+          role: 'agent',
+          coopId: registerData.coopIdToJoin
+        });
+
       } else {
         await signInWithEmailAndPassword(auth, credentials.email, credentials.password);
       }
-    } catch (error: unknown) { 
-        const msg = error instanceof Error ? error.message : "Erreur inconnue";
-        alert("Erreur d'authentification : " + msg); 
+    } catch (error: unknown) {
+      const firebaseError = error as { code?: string; message?: string };
+      let msg = "Une erreur est survenue.";
+      if (firebaseError.code === 'auth/email-already-in-use') msg = "Cette adresse email est déjà utilisée. Connectez-vous ou utilisez une autre adresse.";
+      else if (firebaseError.code === 'auth/weak-password') msg = "Mot de passe trop court (minimum 6 caractères).";
+      else if (firebaseError.code === 'auth/invalid-email') msg = "Adresse email invalide.";
+      else if (firebaseError.code === 'auth/user-not-found' || firebaseError.code === 'auth/wrong-password' || firebaseError.code === 'auth/invalid-credential') msg = "Email ou mot de passe incorrect.";
+      else if (firebaseError.code === 'permission-denied') msg = "Permissions insuffisantes. Vérifiez les règles Firestore dans la console Firebase.";
+      else msg = firebaseError.message || "Erreur inconnue";
+      alert("⚠️ " + msg);
     }
   };
 
@@ -1028,6 +1438,7 @@ const CoopDashboard: React.FC = () => {
           <button onClick={() => setActiveTab('orders')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'orders' ? 'bg-[#1b4332] text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><ShoppingCart size={18}/> Achats</button>
           <button onClick={() => setActiveTab('map')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'map' ? 'bg-blue-600 text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><MapIcon size={18}/> Cartographie</button>
           <button onClick={() => setActiveTab('settings')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'settings' ? 'bg-stone-800 text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><Settings size={18}/> Profil & Config</button>
+          <button onClick={() => setActiveTab('guide')} className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${activeTab === 'guide' ? 'bg-emerald-700 text-white shadow-md' : 'text-stone-500 hover:bg-stone-100'}`}><BookOpen size={18}/> Guide</button>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -1282,6 +1693,38 @@ const CoopDashboard: React.FC = () => {
               </div>
             )}
 
+            {activeTab === 'guide' && (
+              <div className="space-y-6">
+                {/* EN-TÊTE GUIDE */}
+                <div className="bg-gradient-to-br from-[#1b4332] to-[#2d6a4f] rounded-[2.5rem] p-8 text-white relative overflow-hidden">
+                  <div className="absolute top-0 right-0 opacity-10"><BookOpen size={120} strokeWidth={0.8}/></div>
+                  <div className="relative z-10">
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="bg-white/20 p-3 rounded-2xl"><BookOpen size={24}/></div>
+                      <div>
+                        <p className="text-emerald-300 text-xs font-bold uppercase tracking-widest">Documentation</p>
+                        <h2 className="text-2xl font-black tracking-tight">Guide d'utilisation</h2>
+                      </div>
+                    </div>
+                    <p className="text-emerald-100/80 text-sm font-medium max-w-sm">Tout ce qu'il faut savoir pour utiliser GEScoop efficacement sur le terrain — programme PURGA.</p>
+                  </div>
+                </div>
+
+                {/* SECTIONS ACCORDÉON */}
+                <div className="space-y-3">
+                  {GUIDE_SECTIONS.map((section, i) => (
+                    <GuideSection key={section.id} section={section} defaultOpen={i === 0} />
+                  ))}
+                </div>
+
+                {/* PIED DU GUIDE */}
+                <div className="bg-stone-100 rounded-3xl p-6 text-center">
+                  <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-1">Support</p>
+                  <p className="text-sm text-stone-500 font-medium">Pour toute question, contactez votre coordinateur régional PURGA.</p>
+                </div>
+              </div>
+            )}
+
             {activeTab === 'map' && (
               <div className="bg-white rounded-[2.5rem] p-6 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] border border-stone-100 h-[650px] flex flex-col relative overflow-hidden">
                 <div className="flex items-center justify-between mb-6 relative z-10">
@@ -1519,13 +1962,19 @@ const CoopDashboard: React.FC = () => {
         <MapPin size={28} />
       </button>
 
+      {/* BOUTON FLOTTANT AIDE */}
+      <button aria-label="Ouvrir le guide" onClick={() => setActiveTab('guide')} className="fixed bottom-24 left-6 md:bottom-10 md:left-10 bg-white text-[#1b4332] w-14 h-14 rounded-[1.2rem] shadow-[0_8px_20px_rgba(0,0,0,0.12)] flex items-center justify-center hover:bg-emerald-50 transition-all hover:scale-110 active:scale-95 z-[90] border-2 border-emerald-100">
+        <HelpCircle size={24} />
+      </button>
+
       {/* NAVIGATION MOBILE */}
       <div className="md:hidden fixed bottom-0 w-full bg-white/90 backdrop-blur-xl border-t border-stone-100 flex items-center justify-around py-3 px-2 z-[80] shadow-[0_-15px_40px_rgba(0,0,0,0.05)] overflow-x-auto pb-safe">
-        <button onClick={() => setActiveTab('overview')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'overview' ? 'text-[#1b4332]' : 'text-stone-400'}`}><TrendingUp size={22} /><span className="text-[10px] font-bold mt-1.5">Résumé</span></button>
-        <button onClick={() => setActiveTab('members')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'members' ? 'text-[#1b4332]' : 'text-stone-400'}`}><Users size={22} /><span className="text-[10px] font-bold mt-1.5">Paysans</span></button>
-        <button onClick={() => setActiveTab('harvests')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'harvests' ? 'text-amber-500' : 'text-stone-400'}`}><Wheat size={22} /><span className="text-[10px] font-bold mt-1.5">Récoltes</span></button>
-        <button onClick={() => setActiveTab('stock')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'stock' ? 'text-purple-600' : 'text-stone-400'}`}><Package size={22} /><span className="text-[10px] font-bold mt-1.5">Magasin</span></button>
-        <button onClick={() => setActiveTab('settings')} className={`flex flex-col items-center flex-1 min-w-[60px] transition-colors ${activeTab === 'settings' ? 'text-stone-800' : 'text-stone-400'}`}><Settings size={22} /><span className="text-[10px] font-bold mt-1.5">Profil</span></button>
+        <button onClick={() => setActiveTab('overview')} className={`flex flex-col items-center flex-1 min-w-[50px] transition-colors ${activeTab === 'overview' ? 'text-[#1b4332]' : 'text-stone-400'}`}><TrendingUp size={20} /><span className="text-[10px] font-bold mt-1">Résumé</span></button>
+        <button onClick={() => setActiveTab('members')} className={`flex flex-col items-center flex-1 min-w-[50px] transition-colors ${activeTab === 'members' ? 'text-[#1b4332]' : 'text-stone-400'}`}><Users size={20} /><span className="text-[10px] font-bold mt-1">Paysans</span></button>
+        <button onClick={() => setActiveTab('harvests')} className={`flex flex-col items-center flex-1 min-w-[50px] transition-colors ${activeTab === 'harvests' ? 'text-amber-500' : 'text-stone-400'}`}><Wheat size={20} /><span className="text-[10px] font-bold mt-1">Récoltes</span></button>
+        <button onClick={() => setActiveTab('stock')} className={`flex flex-col items-center flex-1 min-w-[50px] transition-colors ${activeTab === 'stock' ? 'text-purple-600' : 'text-stone-400'}`}><Package size={20} /><span className="text-[10px] font-bold mt-1">Magasin</span></button>
+        <button onClick={() => setActiveTab('settings')} className={`flex flex-col items-center flex-1 min-w-[50px] transition-colors ${activeTab === 'settings' ? 'text-stone-800' : 'text-stone-400'}`}><Settings size={20} /><span className="text-[10px] font-bold mt-1">Profil</span></button>
+        <button onClick={() => setActiveTab('guide')} className={`flex flex-col items-center flex-1 min-w-[50px] transition-colors ${activeTab === 'guide' ? 'text-emerald-700' : 'text-stone-400'}`}><BookOpen size={20} /><span className="text-[10px] font-bold mt-1">Guide</span></button>
       </div>
 
     </div>
